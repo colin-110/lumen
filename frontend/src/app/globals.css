@@ -1,0 +1,365 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f8f8fb;
+  --foreground: #14141a;
+  --surface: #ffffff;
+  --surface-hover: #f3f3f8;
+  --surface-2: #fbfbfd;
+  --border: #e7e7ee;
+  --border-strong: #d8d8e3;
+  --muted: #64646f;
+  --muted-foreground: #8b8b96;
+
+  --primary: #5b5bf0;
+  --primary-hover: #4949dd;
+  --primary-foreground: #ffffff;
+
+  --accent: #eef0ff;
+  --accent-foreground: #4a44d6;
+
+  --danger: #dc2626;
+  --danger-foreground: #ffffff;
+  --danger-bg: #fef2f2;
+
+  --success: #16a34a;
+  --success-bg: #f0fdf4;
+
+  --ring: #5b5bf0;
+
+  /* Lumen brand gradient: blue -> violet -> magenta. Used sparingly
+     (brand mark, hero text, focus glow) so it reads as an accent, not noise. */
+  --grad-1: #3aa9ff;
+  --grad-2: #7c6bff;
+  --grad-3: #e05cd9;
+  --gradient-brand: linear-gradient(120deg, var(--grad-1), var(--grad-2) 55%, var(--grad-3));
+  --gradient-brand-soft: linear-gradient(
+    120deg,
+    color-mix(in srgb, var(--grad-1) 16%, transparent),
+    color-mix(in srgb, var(--grad-2) 16%, transparent) 55%,
+    color-mix(in srgb, var(--grad-3) 16%, transparent)
+  );
+}
+
+[data-theme="dark"] {
+  --background: #0a0a0d;
+  --foreground: #f0f0f4;
+  --surface: #16161c;
+  --surface-hover: #1e1e26;
+  --surface-2: #131318;
+  --border: #26262f;
+  --border-strong: #34343f;
+  --muted: #a3a3ae;
+  --muted-foreground: #7c7c88;
+
+  --primary: #8385ff;
+  --primary-hover: #9698ff;
+  --primary-foreground: #0a0a0d;
+
+  --accent: #1c1c2e;
+  --accent-foreground: #b3b4ff;
+
+  --danger: #f87171;
+  --danger-foreground: #1a0505;
+  --danger-bg: #2a1414;
+
+  --success: #4ade80;
+  --success-bg: #0f2417;
+
+  --ring: #8385ff;
+
+  --grad-1: #5db8ff;
+  --grad-2: #9a8bff;
+  --grad-3: #ef7fe6;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-2: var(--surface-2);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-primary-foreground: var(--primary-foreground);
+
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+
+  --color-danger: var(--danger);
+  --color-danger-foreground: var(--danger-foreground);
+  --color-danger-bg: var(--danger-bg);
+
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+
+  --color-ring: var(--ring);
+
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+}
+
+* {
+  border-color: var(--border);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--accent);
+  color: var(--accent-foreground);
+}
+
+/* ---------------------------------------------------------------- brand */
+
+.brand-mark {
+  background: var(--gradient-brand);
+  background-size: 200% 200%;
+  animation: brand-shift 8s ease-in-out infinite;
+}
+
+.brand-text {
+  background: var(--gradient-brand);
+  background-size: 200% 200%;
+  animation: brand-shift 8s ease-in-out infinite;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.brand-ring {
+  position: relative;
+}
+.brand-ring::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1.5px;
+  background: var(--gradient-brand);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+.brand-ring:focus-within::before {
+  opacity: 1;
+}
+
+@keyframes brand-shift {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+/* Soft ambient glow used behind hero/empty-state content */
+.brand-glow {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(60% 50% at 22% 15%, color-mix(in srgb, var(--grad-1) 14%, transparent), transparent 70%),
+    radial-gradient(50% 45% at 80% 10%, color-mix(in srgb, var(--grad-3) 12%, transparent), transparent 70%);
+}
+
+/* ------------------------------------------------------------ scrollbar */
+
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background-color: var(--border-strong);
+  border-radius: 999px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --------------------------------------------------------------- motion */
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.animate-fade-in-up {
+  animation: fade-in-up 0.28s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 0.3s ease-out;
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-scale-in {
+  animation: scale-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes pulse-dot {
+  0%,
+  80%,
+  100% {
+    opacity: 0.35;
+    transform: scale(0.85);
+  }
+  40% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+.animate-pulse-dot {
+  animation: pulse-dot 1.2s infinite ease-in-out;
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+.animate-shimmer {
+  background: linear-gradient(
+    90deg,
+    var(--surface-hover) 25%,
+    var(--border) 50%,
+    var(--surface-hover) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.6s ease-in-out infinite;
+}
+
+/* -------------------------------------------------------- markdown chat */
+
+.prose-chat {
+  font-size: 0.9375rem;
+  line-height: 1.7;
+}
+.prose-chat p {
+  margin: 0 0 0.75em;
+}
+.prose-chat p:last-child {
+  margin-bottom: 0;
+}
+.prose-chat ul,
+.prose-chat ol {
+  margin: 0 0 0.75em;
+  padding-left: 1.25em;
+}
+.prose-chat li {
+  margin: 0.25em 0;
+}
+.prose-chat li > p {
+  margin: 0;
+}
+.prose-chat a {
+  color: var(--primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.prose-chat code {
+  background: var(--accent);
+  color: var(--accent-foreground);
+  padding: 0.15em 0.45em;
+  border-radius: 0.4em;
+  font-size: 0.85em;
+  font-family: var(--font-mono);
+}
+.prose-chat pre {
+  background: #1a1a22;
+  color: #e5e5ea;
+  padding: 1em 1.1em;
+  border-radius: 0.85em;
+  overflow-x: auto;
+  margin: 0.85em 0;
+}
+.prose-chat pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+  font-size: 0.83em;
+}
+.prose-chat h1,
+.prose-chat h2,
+.prose-chat h3 {
+  font-weight: 600;
+  margin: 0.9em 0 0.4em;
+  line-height: 1.3;
+}
+.prose-chat h1 {
+  font-size: 1.15em;
+}
+.prose-chat h2 {
+  font-size: 1.08em;
+}
+.prose-chat h3 {
+  font-size: 1.02em;
+}
+.prose-chat blockquote {
+  border-left: 3px solid var(--grad-2);
+  padding-left: 0.9em;
+  color: var(--muted);
+  margin: 0.75em 0;
+}
+.prose-chat table {
+  border-collapse: collapse;
+  margin: 0.85em 0;
+  width: 100%;
+  font-size: 0.9em;
+  border-radius: 0.6em;
+  overflow: hidden;
+}
+.prose-chat th,
+.prose-chat td {
+  border: 1px solid var(--border);
+  padding: 0.5em 0.7em;
+  text-align: left;
+}
+.prose-chat th {
+  background: var(--surface-hover);
+  font-weight: 600;
+}
