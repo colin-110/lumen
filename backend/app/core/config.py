@@ -116,7 +116,13 @@ class Settings(BaseSettings):
     # and worker services override this to redis://redis:6379/0 (the
     # container-to-container address) via environment variables.
     REDIS_URL: RedisDsn = "redis://localhost:6380/0"  # type: ignore[assignment]
-    CELERY_BROKER_URL: str = "amqp://guest:guest@localhost:5672//"
+
+    # Celery uses Redis (not RabbitMQ) as both broker and result backend —
+    # one fewer service to run/monitor/pay memory for, and Redis is already
+    # a hard dependency here for the semantic cache and rate limiting. A
+    # separate DB index (1, vs. 0 for cache/rate-limit) just keeps the key
+    # spaces apart; it's cosmetic, Redis doesn't isolate DBs from each other.
+    CELERY_BROKER_URL: str = "redis://localhost:6380/1"
 
     @computed_field
     @property
