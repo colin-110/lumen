@@ -41,7 +41,9 @@ python-docx = "^1.1.2"
 # Needs the `tesseract-ocr` system binary — installed in the runtime stage
 # of the Dockerfile, not a Python dependency.
 pytesseract = "^0.3.13"
-pillow = "^11.0.0"
+# Pinned <11 to satisfy fastembed's own pillow constraint (>=10.3.0,<11.0.0)
+# — a real version conflict poetry's resolver caught in CI.
+pillow = "^10.3.0"
 
 # --- storage / observability ---
 boto3 = "^1.35.63"
