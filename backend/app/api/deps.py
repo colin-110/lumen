@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
