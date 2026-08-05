@@ -22,29 +22,14 @@ services:
     # Host port remapped to 6380 to avoid clashing with a Redis instance
     # that might already be running on the host; containers still talk to
     # each other over the standard 6379 on the internal docker network.
+    # Also doubles as the Celery broker/result backend (DB 1) — no
+    # separate message broker service needed.
     ports:
       - "6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  rabbitmq:
-    image: rabbitmq:3-management
-    container_name: enterprise_ai_rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-guest}
-      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASS:-guest}
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    volumes:
-      - rabbitmq_data:/var/lib/rabbitmq
-    healthcheck:
-      test: rabbitmq-diagnostics -q ping
       interval: 5s
       timeout: 5s
       retries: 10
@@ -88,15 +73,17 @@ services:
       - ENVIRONMENT=local
       - POSTGRES_SERVER=db
       - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//
+      - CELERY_BROKER_URL=redis://redis:6379/1
       - QDRANT_URL=http://qdrant:6333
       - S3_ENDPOINT_URL=http://minio:9000
+      # Scale via replicas, not in-process workers — one model copy per
+      # process, so this is the biggest single lever on backend RAM. Bump
+      # this (and add more CPU) for real production traffic.
+      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       qdrant:
         condition: service_started
@@ -108,6 +95,10 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 900m
 
   worker:
     build: ./backend
@@ -119,7 +110,7 @@ services:
       - ENVIRONMENT=local
       - POSTGRES_SERVER=db
       - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=amqp://${RABBITMQ_USER:-guest}:${RABBITMQ_PASS:-guest}@rabbitmq:5672//
+      - CELERY_BROKER_URL=redis://redis:6379/1
       - QDRANT_URL=http://qdrant:6333
       - S3_ENDPOINT_URL=http://minio:9000
     depends_on:
@@ -127,12 +118,14 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       qdrant:
         condition: service_started
       minio:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 700m
 
   frontend:
     build:
@@ -147,6 +140,10 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 200m
 
   prometheus:
     image: prom/prometheus:latest
@@ -158,6 +155,10 @@ services:
       - "9090:9090"
     depends_on:
       - backend
+    deploy:
+      resources:
+        limits:
+          memory: 200m
 
   grafana:
     image: grafana/grafana:latest
@@ -174,11 +175,14 @@ services:
       - "3001:3000"
     depends_on:
       - prometheus
+    deploy:
+      resources:
+        limits:
+          memory: 200m
 
 volumes:
   postgres_data:
   redis_data:
-  rabbitmq_data:
   qdrant_data:
   minio_data:
   prometheus_data:
