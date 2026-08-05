@@ -11,7 +11,7 @@ import json
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, PostgresDsn, RedisDsn, computed_field, field_validator
+from pydantic import PostgresDsn, RedisDsn, computed_field, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
@@ -161,6 +161,14 @@ class Settings(BaseSettings):
     RETRIEVE_CANDIDATES: int = 40  # pulled from Qdrant before reranking
     RERANK_TOP_K: int = 6  # handed to the LLM after reranking
     MIN_RERANK_SCORE: float = -6.0  # cross-encoder logit floor
+
+    # ------------------------------------------------------------------ ocr
+    # Scanned/image-only PDF pages have no text layer for PyMuPDF to read.
+    # Per-page fallback: if a page yields fewer than this many characters,
+    # treat it as scanned and OCR it with Tesseract instead.
+    OCR_ENABLED: bool = True
+    OCR_MIN_CHARS_PER_PAGE: int = 20
+    OCR_DPI: int = 200
 
     # ----------------------------------------------------------------- llm
     OPENAI_API_KEY: str | None = None

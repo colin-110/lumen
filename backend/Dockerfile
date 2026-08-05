@@ -30,9 +30,12 @@ WORKDIR /app
 # curl: container healthcheck. libpq5: the *runtime* Postgres client lib
 # that psycopg's compiled bindings dynamically link against — libpq-dev's
 # headers (needed only to build it) stay behind in the builder stage.
+# tesseract-ocr: OCR fallback for scanned/image-only PDF pages (see
+# app/services/document_parser.py) — a real binary, not a pip package.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     libpq5 \
+    tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
