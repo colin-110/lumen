@@ -49,6 +49,9 @@ one command.
   Groq, or local Ollama; a failed/rate-limited provider automatically fails over to the next.
 - **Async document ingestion** — Celery-based pipeline: parse (PDF/DOCX/TXT/MD/CSV) → chunk →
   embed → index, with live status polling in the UI.
+- **OCR fallback** — scanned/image-only PDF pages (no text layer) are rendered and run through
+  Tesseract automatically, per-page, so mixed born-digital/scanned PDFs only pay the OCR cost on
+  the pages that actually need it.
 - **Real auth** — JWT access + refresh tokens, bcrypt password hashing, per-organization data
   isolation.
 - **Observability out of the box** — Prometheus metrics + a provisioned Grafana dashboard
@@ -353,7 +356,6 @@ monitoring/
 ## Known limitations
 
 - **Chunking is structure-blind** — fixed 1000-char windows, no awareness of headings/tables.
-- **No OCR** — scanned/image-only PDFs return no extractable text.
 - **No relevance grading step** — retrieved chunks reach the model based on the reranker score
   alone; nothing double-checks relevance with a second LLM pass.
 - **No eval harness** — retrieval precision/recall isn't measured against a fixed test set, so
