@@ -24,7 +24,15 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
   const queryClient = useQueryClient();
   const { push } = useToast();
 
-  const conversationIdRef = useRef<string | undefined>(initialConversationId);
+  // Deliberately NOT seeded with initialConversationId: the guard effect
+  // below compares this ref against the prop to decide whether history
+  // needs (re)loading, and if we seeded it with the same value the prop
+  // already has, that comparison is a no-op on the very first render —
+  // exactly the case where a conversation is opened directly (e.g. the
+  // URL already has ?c=<id> on mount, such as reopening a saved chat) and
+  // history actually does need to load. Leaving it undefined guarantees a
+  // mismatch on mount whenever there's a real id to load.
+  const conversationIdRef = useRef<string | undefined>(undefined);
   const [conversationId, setConversationId] = useState<string | undefined>(initialConversationId);
   const [messages, setMessages] = useState<DisplayMessage[]>([]);
   const [historyLoading, setHistoryLoading] = useState(!!initialConversationId);
