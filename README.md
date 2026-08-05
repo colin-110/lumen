@@ -233,6 +233,68 @@ make lint     # ruff (backend) + eslint (frontend)
 GitHub Actions (`.github/workflows/ci.yml`) runs lint + test on the backend and lint + type-check +
 build on the frontend on every push and pull request against `main`.
 
+<details>
+<summary>Real <code>pytest</code> output (run against this repo)</summary>
+
+```
+============================= test session starts ==============================
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python3.12
+collecting ... collected 22 items
+
+tests/test_chunking.py::test_empty_text_returns_no_chunks PASSED         [  4%]
+tests/test_chunking.py::test_short_text_returns_single_chunk PASSED      [  9%]
+tests/test_chunking.py::test_long_text_splits_into_multiple_chunks_within_size PASSED [ 13%]
+tests/test_chunking.py::test_consecutive_chunks_share_overlap_text PASSED [ 18%]
+tests/test_chunking.py::test_no_content_lost_across_chunks PASSED        [ 22%]
+tests/test_config.py::test_empty_fallback_models_env_var_does_not_crash PASSED [ 27%]
+tests/test_config.py::test_comma_separated_fallback_models PASSED        [ 31%]
+tests/test_config.py::test_json_array_fallback_models PASSED             [ 36%]
+tests/test_config.py::test_empty_cors_origins_env_var_does_not_crash PASSED [ 40%]
+tests/test_config.py::test_comma_separated_cors_origins PASSED           [ 45%]
+tests/test_config.py::test_default_settings_construct_without_any_env_vars PASSED [ 50%]
+tests/test_main.py::test_health_check PASSED                             [ 54%]
+tests/test_main.py::test_openapi_schema_loads PASSED                     [ 59%]
+tests/test_main.py::test_chat_requires_auth PASSED                       [ 63%]
+tests/test_main.py::test_upload_requires_auth PASSED                     [ 68%]
+tests/test_security.py::test_password_hash_roundtrip PASSED              [ 72%]
+tests/test_security.py::test_password_hash_is_salted PASSED              [ 77%]
+tests/test_security.py::test_verify_password_rejects_garbage_hash_without_raising PASSED [ 81%]
+tests/test_security.py::test_bcrypt_72_byte_truncation_is_handled_safely PASSED [ 86%]
+tests/test_security.py::test_access_and_refresh_tokens_roundtrip PASSED  [ 90%]
+tests/test_security.py::test_decode_token_rejects_tampered_signature PASSED [ 95%]
+tests/test_security.py::test_decode_token_rejects_garbage PASSED         [100%]
+
+============================= 22 passed in 18.28s ==============================
+```
+
+</details>
+
+## Verify it yourself
+
+Don't take the README's word for it — after `docker compose up -d` (see Quickstart above), check
+each layer directly:
+
+```bash
+# 1. Containers are up and healthy
+docker compose ps
+
+# 2. Backend is alive
+curl http://localhost:8000/health
+# -> {"status":"ok","version":"1.0.0","environment":"local"}
+
+# 3. Full test suite, inside the actual container
+docker compose exec backend sh -c "pip install --quiet pytest pytest-asyncio && pytest -v"
+
+# 4. Prometheus is scraping the backend
+curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
+# -> "health":"up"
+```
+
+Then in a browser: `http://localhost:3000` → log in with the seeded admin → upload a document →
+watch its status go `Queued` → `Ready` → ask a question about it and confirm the answer cites the
+document you uploaded. `http://localhost:3001` (Grafana) should show live request metrics as you
+click around.
+
 ---
 
 ## Deploying
