@@ -18,22 +18,20 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-import uuid
 from dataclasses import dataclass
 
 from app.evaluation import metrics
+from app.evaluation.fixtures import (
+    EVAL_OWNER_ID,
+    cleanup_fixtures,
+    doc_uuid,
+    ingest_fixtures,
+)
 from app.evaluation.golden_dataset import DOCUMENTS, QUESTIONS
 from app.services import retrieval
-from app.services.qdrant_client import delete_owner_points, init_qdrant
 
 logging.basicConfig(level=logging.WARNING)  # keep model-loading INFO noise out of the report
 logger = logging.getLogger(__name__)
-
-# Stable, deterministic ids so re-running the harness is idempotent and
-# never collides with real tenant data (no real owner_id will ever equal
-# this fixed UUID5).
-_NAMESPACE = uuid.UUID("2f6a2b0e-2b0a-4e2b-9c3a-8f1e0d6a7b10")
-EVAL_OWNER_ID = uuid.uuid5(_NAMESPACE, "eval-harness-owner")
 
 
 @dataclass
@@ -44,23 +42,6 @@ class StrategyResult:
     mrr: float = 0.0
     ndcg_at_10: float = 0.0
     avg_latency_ms: float = 0.0
-
-
-def _doc_uuid(doc_key: str) -> uuid.UUID:
-    return uuid.uuid5(_NAMESPACE, f"doc:{doc_key}")
-
-
-async def _ingest_fixtures() -> None:
-    init_qdrant()
-    delete_owner_points(str(EVAL_OWNER_ID))
-    for doc in DOCUMENTS:
-        await retrieval.index_chunks(
-            document_id=_doc_uuid(doc.doc_key),
-            filename=doc.filename,
-            owner_id=EVAL_OWNER_ID,
-            organization_id=None,
-            chunks=[doc.text],
-        )
 
 
 def _ranked_doc_ids(chunks) -> list[str]:
@@ -80,7 +61,7 @@ async def _score_strategy(name: str, search_fn) -> StrategyResult:
     latency_sum_ms = 0.0
 
     for q in QUESTIONS:
-        relevant_str = {str(_doc_uuid(key)) for key in q.relevant_doc_keys}
+        relevant_str = {str(doc_uuid(key)) for key in q.relevant_doc_keys}
 
         start = time.perf_counter()
         chunks = await search_fn(q.question, None, str(EVAL_OWNER_ID), 10)
@@ -117,7 +98,7 @@ def _print_report(results: list[StrategyResult]) -> None:
 
 async def main(keep_fixtures: bool = False) -> list[StrategyResult]:
     logger.info("Ingesting %d golden documents into the eval namespace...", len(DOCUMENTS))
-    await _ingest_fixtures()
+    await ingest_fixtures()
 
     strategies = [
         ("Dense only", retrieval.dense_search),
@@ -134,7 +115,7 @@ async def main(keep_fixtures: bool = False) -> list[StrategyResult]:
     _print_report(results)
 
     if not keep_fixtures:
-        delete_owner_points(str(EVAL_OWNER_ID))
+        cleanup_fixtures()
     else:
         print(f"Fixtures left in Qdrant under owner_id={EVAL_OWNER_ID} (--keep passed).")
 
