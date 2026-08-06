@@ -2,19 +2,12 @@
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, File, Trash2 } from "lucide-react";
-import { useCallback, useState } from "react";
 import * as api from "@/lib/api-client";
 import { useToast } from "@/lib/toast-context";
+import { useDocumentUploads } from "@/lib/use-document-uploads";
 import { UploadDropzone } from "./UploadDropzone";
 import { StatusBadge } from "./StatusBadge";
 import type { DocumentItem } from "@/lib/types";
-
-interface UploadTask {
-  key: string;
-  filename: string;
-  progress: number;
-  error?: string;
-}
 
 function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
@@ -25,7 +18,7 @@ function formatBytes(bytes: number): string {
 export function DocumentsView() {
   const queryClient = useQueryClient();
   const { push } = useToast();
-  const [uploads, setUploads] = useState<UploadTask[]>([]);
+  const { uploads, handleFiles } = useDocumentUploads();
 
   const { data: documents = [], isLoading } = useQuery({
     queryKey: ["documents"],
@@ -36,32 +29,6 @@ export function DocumentsView() {
       return stillWorking ? 2500 : false;
     },
   });
-
-  const handleFiles = useCallback(
-    (files: File[]) => {
-      for (const file of files) {
-        const key = `${file.name}-${Date.now()}-${Math.random()}`;
-        setUploads((prev) => [...prev, { key, filename: file.name, progress: 0 }]);
-
-        api
-          .uploadDocument(file, (pct) => {
-            setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, progress: pct } : u)));
-          })
-          .then(() => {
-            setUploads((prev) => prev.filter((u) => u.key !== key));
-            queryClient.invalidateQueries({ queryKey: ["documents"] });
-            push(`${file.name} uploaded — processing started`, "success");
-          })
-          .catch((err) => {
-            const message = err instanceof Error ? err.message : "Upload failed";
-            setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, error: message } : u)));
-            push(`${file.name}: ${message}`, "error");
-            setTimeout(() => setUploads((prev) => prev.filter((u) => u.key !== key)), 4000);
-          });
-      }
-    },
-    [queryClient, push]
-  );
 
   const handleDelete = async (doc: DocumentItem) => {
     if (!confirm(`Delete "${doc.filename}"? This removes it from the knowledge base.`)) return;

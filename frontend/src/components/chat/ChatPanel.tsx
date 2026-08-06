@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import * as api from "@/lib/api-client";
 import { useToast } from "@/lib/toast-context";
+import { useDocumentUploads } from "@/lib/use-document-uploads";
 import { EXAMPLE_PROMPTS } from "@/lib/suggestions";
 import { MessageBubble, type DisplayMessage } from "./MessageBubble";
 import { Composer } from "./Composer";
@@ -23,6 +24,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
   const router = useRouter();
   const queryClient = useQueryClient();
   const { push } = useToast();
+  const { uploads, handleFiles } = useDocumentUploads();
 
   // Deliberately NOT seeded with initialConversationId: the guard effect
   // below compares this ref against the prop to decide whether history
@@ -197,7 +199,14 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
           )}
         </div>
       </div>
-      <Composer onSend={handleSend} onStop={handleStop} disabled={sending} isStreaming={sending} />
+      <Composer
+        onSend={handleSend}
+        onStop={handleStop}
+        disabled={sending}
+        isStreaming={sending}
+        uploads={uploads}
+        onAttachFiles={handleFiles}
+      />
     </div>
   );
 }
