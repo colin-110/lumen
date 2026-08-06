@@ -242,6 +242,36 @@ Numbers measured on this repo with `docker stats` / `docker images`, not marketi
   could consume all host RAM. The worker's cap was also raised after it was measured at ~697 MB
   against a 700 MB limit — close enough to the ceiling that a large PDF would OOM-kill it mid-task.
 
+**Pass 3 — dependency pruning and startup time:**
+
+| | Before | After |
+|---|---|---|
+| Backend image | 1.58 GB | **1.41 GB** |
+| `import app.main` | 11.4 s | **3.1 s** |
+| Container start → `/health` 200 | — | **6.6 s** |
+
+- **Pruned four transitive packages inference never loads** — `sympy` (66 MB), `ml_dtypes` (24 MB),
+  `onnx` (14 MB) and `mpmath` (4 MB), plus bundled test suites and `.pyi` type stubs. `onnxruntime`
+  loads a `.onnx` file through its own C++ loader; the `onnx` Python package and the symbolic-maths
+  stack behind its shape-inference tooling are model-*authoring* dependencies. Verified by wiping
+  the model cache and re-running the full download + all three models end to end.
+- **`litellm` is no longer imported at module scope.** It measured 8.9 s and ~340 MB resident —
+  about 70 % of total import time — and pulls in `litellm.proxy._types` for a proxy server this
+  project doesn't run. Every process paid it before serving anything, including `/health`, auth and
+  the document endpoints, none of which reach an LLM. It now loads on first use, warmed on a
+  background thread at startup so the first chat still finds it ready.
+
+Three things that *looked* prunable in an import trace and are deliberately kept, because the trace
+was misleading: `hf_xet` (fastembed's HuggingFace download path hard-fails without it — invisible at
+runtime only because models are already cached), `uvloop` (uvicorn selects it through its own loop
+setup, not an import from our code) and `psycopg_binary` (backs the sync `postgresql+psycopg` URL
+alembic uses for migrations).
+
+Also measured and **rejected**: deleting the 143 MB of `.pyc` files in site-packages. With
+`PYTHONDONTWRITEBYTECODE=1` they are never regenerated, so every process start re-compiles from
+source — measured at **+4.7 s on every start** (11.4 s → 16.2 s at the time). Not worth 143 MB for a
+service that scales by adding replicas.
+
 Usage after ingesting a handful of documents and running several chats — i.e. with the ONNX models
 loaded, not at idle:
 

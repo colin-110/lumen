@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
@@ -54,7 +55,28 @@ async def lifespan(app: FastAPI):
     except Exception:
         logger.error("Embedding model warm-up failed; will lazy-load on first use", exc_info=True)
 
+    # Warm the LLM router *in the background*. `litellm` is a ~9s import
+    # (see services/llm_router.py for why it's no longer imported at module
+    # scope), so doing it inline here would just move the startup stall
+    # rather than remove it. Off the critical path, /health, auth and the
+    # document endpoints are servable in ~3s while this finishes, and a
+    # chat arriving after that finds the router already built.
+    async def _warm_llm_router() -> None:
+        try:
+            from app.services.llm_router import get_router
+
+            await asyncio.to_thread(get_router)
+            logger.info("LLM router warm")
+        except Exception:
+            logger.warning("LLM router warm-up failed; will build on first chat", exc_info=True)
+
+    warm_task = asyncio.create_task(_warm_llm_router())
+
     yield
+
+    # Don't let a half-finished import outlive the app.
+    if not warm_task.done():
+        warm_task.cancel()
     logger.info("Shutting down %s", settings.PROJECT_NAME)
 
 
