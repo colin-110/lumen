@@ -57,6 +57,12 @@ one command.
 - **Observability out of the box** — Prometheus metrics + a provisioned Grafana dashboard
   (request rate, latency percentiles, error rate) with zero manual setup.
 - **Type-ahead composer** — suggests example prompts and recent conversation titles as you type.
+- **Retrieval debugger** — a superuser-only view that traces one question through every pipeline
+  stage (rewrite → cache probe → dense/sparse → fusion → rerank → selection → final prompt), showing
+  per-stage latency, each candidate's score, how far reranking moved it, and what the score floor
+  dropped.
+- **Measured retrieval quality** — a golden-dataset harness scores Recall@k / MRR / NDCG across four
+  retrieval strategies, so pipeline changes are judged by a number rather than by feel.
 
 ---
 
@@ -279,6 +285,45 @@ partial, quota-throttled run — run it against your own key to generate them.
 
 ---
 
+## Retrieval debugger
+
+Aggregate metrics tell you *whether* retrieval is working; they don't tell you *why* a specific
+answer went wrong. `/debug` (superuser-only, linked in the sidebar) traces one question through
+every stage of the pipeline:
+
+```
+question → query rewrite → semantic-cache probe
+        → dense search → sparse/BM25 search → RRF fusion
+        → cross-encoder rerank → production score-floor cut
+        → the exact prompt sent to the model → (optional) answer
+```
+
+Each stage shows its own latency, every candidate chunk with its score, and — from the rerank stage
+onward — **how far each chunk moved**, so the reranker's effect is visible rather than asserted. The
+final stage separately lists what got **dropped** by the score floor / top-k cut, which is where a
+plausible-looking candidate usually disappears.
+
+A real trace, asking *"How much can I spend on food per day when travelling?"* against five
+documents:
+
+| Stage | Result |
+|---|---|
+| Dense | `expenses .761` · `travel .640` · `perdiem .632` · `incident .474` · `vpn .447` |
+| BM25 | `expenses 15.08` · `travel 6.60` · `perdiem 5.12` · `vpn 2.89` |
+| RRF fusion | `expenses` · `travel` · `perdiem` · `vpn` · `incident` |
+| Cross-encoder | `expenses 4.23` · `perdiem −9.74` ↑1 · `travel −10.48` ↓1 · `vpn −11.15` · `incident −11.20` |
+| Selected | `expenses` only — the other four fall below the −6.0 floor |
+
+That last row is the useful part: five candidates survive fusion, and the cross-encoder is what
+recognises that only one of them actually answers the question.
+
+The retrieval stages are computed locally, so tracing costs nothing. The two paid steps are opt-in:
+query rewriting only runs when a `conversation_id` is supplied, and answer generation only when the
+"Also generate the answer" toggle is on. The endpoint is gated on `is_superuser` because the
+response includes the system prompt and raw chunk text.
+
+---
+
 ## Testing & CI
 
 ```bash
@@ -388,7 +433,7 @@ without touching application code (`storage.py` already speaks the plain S3 API 
 ```
 backend/
   app/
-    api/v1/endpoints/   # auth, documents, conversations, chat
+    api/v1/endpoints/   # auth, documents, conversations, chat, debug
     core/               # config, security, logging, celery, rate limiting
     crud/                # DB access layer
     models/ schemas/     # SQLAlchemy models + Pydantic schemas
@@ -400,7 +445,7 @@ backend/
 frontend/
   src/
     app/                  # Next.js App Router pages
-    components/           # chat, documents, auth, layout
+    components/           # chat, documents, debug, auth, layout
     lib/                   # API client, auth context, types
 monitoring/
   prometheus.yml

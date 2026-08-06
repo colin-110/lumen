@@ -3,6 +3,7 @@ import type {
   Conversation,
   ConversationDetail,
   DocumentItem,
+  RetrievalDebug,
   StreamEvent,
   Tokens,
   User,
@@ -121,17 +122,19 @@ async function tryRefresh(): Promise<boolean> {
 interface RequestOpts extends RequestInit {
   auth?: boolean;
   isRetry?: boolean;
+  /** Overrides DEFAULT_TIMEOUT_MS for endpoints that legitimately run long. */
+  timeoutMs?: number;
 }
 
 async function apiFetch(path: string, opts: RequestOpts = {}): Promise<Response> {
-  const { auth = true, isRetry, headers, ...rest } = opts;
+  const { auth = true, isRetry, headers, timeoutMs, ...rest } = opts;
   const finalHeaders = new Headers(headers);
   if (auth) {
     const token = getAccessToken();
     if (token) finalHeaders.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetchWithTimeout(`${API_BASE}${path}`, { ...rest, headers: finalHeaders });
+  const res = await fetchWithTimeout(`${API_BASE}${path}`, { ...rest, headers: finalHeaders }, timeoutMs);
 
   if (res.status === 401 && auth && !isRetry) {
     const refreshed = await tryRefresh();
@@ -263,6 +266,28 @@ export async function createConversation(title?: string): Promise<Conversation> 
 
 export async function deleteConversation(id: string): Promise<void> {
   await apiFetch(`/conversations/${id}`, { method: "DELETE" });
+}
+
+// --------------------------------------------------------------- debug
+
+/** Superuser-only. Retrieval stages are computed locally and cost nothing;
+ * `generateAnswer` adds one LLM call. */
+export async function debugRetrieval(
+  message: string,
+  opts: { conversationId?: string; generateAnswer?: boolean } = {}
+): Promise<RetrievalDebug> {
+  return apiJson<RetrievalDebug>("/debug/retrieval", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      message,
+      conversation_id: opts.conversationId ?? null,
+      generate_answer: opts.generateAnswer ?? false,
+    }),
+    // Five retrieval stages back-to-back on CPU (plus optional generation)
+    // legitimately outlasts the default 20s budget.
+    timeoutMs: 90_000,
+  });
 }
 
 // ---------------------------------------------------------------- chat
