@@ -145,7 +145,12 @@ services:
     deploy:
       resources:
         limits:
-          memory: 700m
+          # Measured at ~697MB against a 700m cap after ingesting a handful of
+          # documents — i.e. essentially at the ceiling, where the next large
+          # PDF gets the container OOM-killed mid-task. Celery's acks_late
+          # would requeue it, so it would retry and die again rather than fail
+          # loudly. 900m matches the backend and leaves real headroom.
+          memory: 900m
 
   frontend:
     build:
