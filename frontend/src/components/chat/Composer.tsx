@@ -1,26 +1,31 @@
 "use client";
 
-import { Square, ArrowUp, CornerDownLeft, MessagesSquare } from "lucide-react";
+import { Square, ArrowUp, CornerDownLeft, MessagesSquare, Paperclip, AlertTriangle } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import * as api from "@/lib/api-client";
 import { EXAMPLE_PROMPTS, type SuggestionPrompt } from "@/lib/suggestions";
+import type { UploadTask } from "@/lib/use-document-uploads";
 
 interface ComposerProps {
   onSend: (message: string) => void;
   onStop: () => void;
   disabled: boolean;
   isStreaming: boolean;
+  uploads: UploadTask[];
+  onAttachFiles: (files: File[]) => void;
 }
 
 const MAX_SUGGESTIONS = 6;
+const ACCEPT = ".pdf,.docx,.txt,.md,.csv";
 
-export function Composer({ onSend, onStop, disabled, isStreaming }: ComposerProps) {
+export function Composer({ onSend, onStop, disabled, isStreaming, uploads, onAttachFiles }: ComposerProps) {
   const [value, setValue] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Reuses the sidebar's cached conversation list (same query key) — no
   // extra network request in the common case.
@@ -145,41 +150,81 @@ export function Composer({ onSend, onStop, disabled, isStreaming }: ComposerProp
           )}
 
           <div className="brand-ring rounded-[26px]">
-            <div className="flex items-end gap-2 rounded-[26px] border border-border-strong bg-background shadow-sm focus-within:shadow-md transition-shadow px-4 py-2.5">
-              <textarea
-                ref={textareaRef}
-                value={value}
-                onChange={handleChange}
-                onKeyDown={handleKeyDown}
-                onFocus={() => setDismissed(false)}
-                placeholder="Ask anything about your organization's documents…"
-                rows={1}
-                disabled={disabled}
-                className="flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground disabled:opacity-60"
-              />
-              {isStreaming ? (
-                <button
-                  onClick={onStop}
-                  className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full bg-foreground text-background hover:opacity-85 transition-opacity"
-                  aria-label="Stop generating"
-                  title="Stop generating"
-                >
-                  <Square size={14} fill="currentColor" />
-                </button>
-              ) : (
-                <button
-                  onClick={() => submit()}
-                  disabled={disabled || !value.trim()}
-                  className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all ${
-                    value.trim()
-                      ? "brand-mark text-white hover:brightness-110 active:scale-95"
-                      : "bg-surface-hover text-muted-foreground"
-                  }`}
-                  aria-label="Send message"
-                >
-                  <ArrowUp size={17} strokeWidth={2.5} />
-                </button>
+            <div className="flex flex-col gap-2 rounded-[26px] border border-border-strong bg-background shadow-sm focus-within:shadow-md transition-shadow px-4 py-2.5">
+              {uploads.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {uploads.map((u) => (
+                    <div
+                      key={u.key}
+                      className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs animate-fade-in-up ${
+                        u.error ? "border-danger/30 bg-danger-bg text-danger" : "border-border bg-surface text-foreground"
+                      }`}
+                    >
+                      {u.error ? <AlertTriangle size={11} className="shrink-0" /> : null}
+                      <span className="max-w-[10rem] truncate">{u.filename}</span>
+                      <span className="shrink-0 opacity-60">{u.error ? "failed" : `${u.progress}%`}</span>
+                    </div>
+                  ))}
+                </div>
               )}
+              <div className="flex items-end gap-2">
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept={ACCEPT}
+                  multiple
+                  disabled={disabled}
+                  className="hidden"
+                  onChange={(e) => {
+                    const files = Array.from(e.target.files ?? []);
+                    if (files.length) onAttachFiles(files);
+                    e.target.value = "";
+                  }}
+                />
+                <button
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={disabled}
+                  className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full text-muted-foreground hover:bg-surface-hover hover:text-foreground transition-colors disabled:opacity-60"
+                  aria-label="Attach document"
+                  title="Attach a document (PDF, DOCX, TXT, MD, CSV)"
+                >
+                  <Paperclip size={17} />
+                </button>
+                <textarea
+                  ref={textareaRef}
+                  value={value}
+                  onChange={handleChange}
+                  onKeyDown={handleKeyDown}
+                  onFocus={() => setDismissed(false)}
+                  placeholder="Ask anything about your organization's documents…"
+                  rows={1}
+                  disabled={disabled}
+                  className="flex-1 resize-none bg-transparent py-1.5 text-[15px] leading-relaxed outline-none placeholder:text-muted-foreground disabled:opacity-60"
+                />
+                {isStreaming ? (
+                  <button
+                    onClick={onStop}
+                    className="shrink-0 flex items-center justify-center w-9 h-9 rounded-full bg-foreground text-background hover:opacity-85 transition-opacity"
+                    aria-label="Stop generating"
+                    title="Stop generating"
+                  >
+                    <Square size={14} fill="currentColor" />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => submit()}
+                    disabled={disabled || !value.trim()}
+                    className={`shrink-0 flex items-center justify-center w-9 h-9 rounded-full transition-all ${
+                      value.trim()
+                        ? "brand-mark text-white hover:brightness-110 active:scale-95"
+                        : "bg-surface-hover text-muted-foreground"
+                    }`}
+                    aria-label="Send message"
+                  >
+                    <ArrowUp size={17} strokeWidth={2.5} />
+                  </button>
+                )}
+              </div>
             </div>
           </div>
         </div>
