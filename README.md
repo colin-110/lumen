@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-22%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-29%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -220,17 +220,45 @@ What actually moved the needle:
 - **Per-service memory limits** in `docker-compose.yml` so usage stays predictable under load
   instead of unbounded.
 
-Test suite: **22 tests**, backend (`pytest`), covering JWT/password-hashing correctness, text
-chunking behavior, and regression coverage for config-parsing bugs (an empty/comma-separated
-env var previously crashed the app at startup — now covered so it can't silently regress).
+Test suite: **29 tests**, backend (`pytest`), covering JWT/password-hashing correctness, text
+chunking behavior, retrieval-metric correctness, and regression coverage for config-parsing bugs
+(an empty/comma-separated env var previously crashed the app at startup — now covered so it can't
+silently regress).
+
+---
+
+## Retrieval evaluation
+
+`make eval-retrieval` runs a golden-dataset harness (`backend/app/evaluation/`) that measures
+retrieval quality directly — no LLM calls, no API cost, safe to re-run after any change to
+chunking, embeddings, or the fusion/rerank pipeline. It ingests 15 fixture documents into an
+isolated namespace, runs 17 known-answer questions through four retrieval strategies using the
+exact same code paths as production (`app/services/retrieval.py`), and scores each against
+Recall@k, MRR, and NDCG@k:
+
+| Strategy | Recall@5 | Recall@10 | MRR | NDCG@10 | Avg latency |
+|---|---:|---:|---:|---:|---:|
+| Dense only | 98% | 100% | 1.00 | 0.99 | 43ms |
+| BM25 (sparse) only | 94% | 94% | 0.91 | 0.92 | 18ms |
+| Hybrid (RRF) | 98% | 100% | 1.00 | 0.99 | 42ms |
+| Hybrid + reranker | 100% | 100% | 1.00 | 1.00 | 266ms |
+
+This fixture corpus is deliberately small and topically distinct (so ground truth stays
+unambiguous to hand-verify), which is why every strategy scores well — the gap between strategies
+widens on noisier, larger, more ambiguous real-world corpora. Extend it by adding entries to
+`DOCUMENTS`/`QUESTIONS` in `app/evaluation/golden_dataset.py`; nothing else needs to change.
+
+Generation-quality evaluation (faithfulness, hallucination rate, answer relevancy) isn't
+implemented yet — see Known limitations.
 
 ---
 
 ## Testing & CI
 
 ```bash
-make test     # pytest — auth, chunking, config-parsing regression tests
-make lint     # ruff (backend) + eslint (frontend)
+make test            # pytest — auth, chunking, config-parsing, retrieval-metric tests
+make lint             # ruff (backend) + eslint (frontend)
+make eval-retrieval   # retrieval quality harness — see "Retrieval evaluation" above
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint + test on the backend and lint + type-check +
@@ -339,6 +367,7 @@ backend/
     models/ schemas/     # SQLAlchemy models + Pydantic schemas
     services/            # retrieval, embeddings, agent pipeline, LLM router, storage
     tasks/                # Celery document ingestion
+    evaluation/           # golden-dataset retrieval eval harness (make eval-retrieval)
   alembic/               # migrations
   tests/                  # pytest suite
 frontend/
@@ -358,8 +387,8 @@ monitoring/
 - **Chunking is structure-blind** — fixed 1000-char windows, no awareness of headings/tables.
 - **No relevance grading step** — retrieved chunks reach the model based on the reranker score
   alone; nothing double-checks relevance with a second LLM pass.
-- **No eval harness** — retrieval precision/recall isn't measured against a fixed test set, so
-  retrieval quality changes are currently judged by hand, not by a number.
+- **No generation eval** — retrieval quality is measured (`make eval-retrieval`), but faithfulness,
+  hallucination rate, and answer relevancy of the LLM's generated answers are still judged by hand.
 - **Single-region, single-instance** by default — horizontal scaling works (stateless
   backend/frontend, replica-friendly worker) but isn't wired up as infra-as-code yet.
 
@@ -368,7 +397,7 @@ monitoring/
 - LLM-based relevance grading before generation
 - Structure-aware chunking (headings/paragraphs, not raw character counts)
 - HyDE (hypothetical document embeddings) for retrieval
-- Fixed eval set + measured retrieval precision/recall
+- Generation-quality eval (Ragas/DeepEval) — faithfulness, hallucination rate, answer relevancy
 - GPU execution provider for embedding/reranking at higher throughput
 - Terraform/CDK for the managed-services deployment path
 

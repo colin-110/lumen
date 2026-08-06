@@ -20,6 +20,8 @@ from app.services.qdrant_client import (
     COLLECTION_NAME,
     DENSE_VECTOR_NAME,
     SPARSE_VECTOR_NAME,
+)
+from app.services.qdrant_client import (
     client as qdrant,
 )
 
@@ -47,11 +49,28 @@ def _tenant_filter(organization_id: str | None, owner_id: str) -> models.Filter:
     )
 
 
-def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list[RetrievedChunk]:
+def _points_to_chunks(points) -> list[RetrievedChunk]:
+    return [
+        RetrievedChunk(
+            chunk_id=str(p.id),
+            document_id=p.payload.get("document_id", ""),
+            filename=p.payload.get("filename", "unknown"),
+            text=p.payload.get("text", ""),
+            score=float(p.score),
+        )
+        for p in points
+    ]
+
+
+def _hybrid_candidates_sync(
+    query: str, organization_id: str | None, owner_id: str, candidates: int
+) -> tuple[list, list[str]]:
+    """Shared prefetch+RRF step behind both `hybrid_search` (reranked, used in
+    production) and `hybrid_search_no_rerank` (used by the retrieval eval
+    harness to isolate what RRF fusion alone contributes vs. the reranker)."""
     dense_vec = embeddings.embed_dense_one(query)
     sparse = embeddings.embed_sparse_one(query)
     query_filter = _tenant_filter(organization_id, owner_id)
-    candidates = settings.RETRIEVE_CANDIDATES
 
     result = qdrant.query_points(
         collection_name=COLLECTION_NAME,
@@ -73,14 +92,17 @@ def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list
         limit=candidates,
         with_payload=True,
     )
-
     points = result.points
+    texts = [p.payload.get("text", "") for p in points]
+    return points, texts
+
+
+def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list[RetrievedChunk]:
+    points, texts = _hybrid_candidates_sync(query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES)
     if not points:
         return []
 
-    texts = [p.payload.get("text", "") for p in points]
     rerank_scores = embeddings.rerank(query, texts)
-
     scored = [
         RetrievedChunk(
             chunk_id=str(p.id),
@@ -101,6 +123,81 @@ def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list
 
 async def hybrid_search(query: str, organization_id: str | None, owner_id: str) -> list[RetrievedChunk]:
     return await asyncio.to_thread(_search_sync, query, organization_id, owner_id)
+
+
+# --- strategy variants below, used only by the retrieval eval harness
+# (app/evaluation/) to benchmark what each stage of the pipeline actually
+# contributes. Production chat always uses `hybrid_search` above.
+
+
+def _dense_only_sync(query: str, organization_id: str | None, owner_id: str, limit: int) -> list[RetrievedChunk]:
+    dense_vec = embeddings.embed_dense_one(query)
+    result = qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        query=dense_vec,
+        using=DENSE_VECTOR_NAME,
+        query_filter=_tenant_filter(organization_id, owner_id),
+        limit=limit,
+        with_payload=True,
+    )
+    return _points_to_chunks(result.points)
+
+
+async def dense_search(query: str, organization_id: str | None, owner_id: str, limit: int = 10) -> list[RetrievedChunk]:
+    return await asyncio.to_thread(_dense_only_sync, query, organization_id, owner_id, limit)
+
+
+def _sparse_only_sync(query: str, organization_id: str | None, owner_id: str, limit: int) -> list[RetrievedChunk]:
+    sparse = embeddings.embed_sparse_one(query)
+    result = qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        query=models.SparseVector(indices=sparse["indices"], values=sparse["values"]),
+        using=SPARSE_VECTOR_NAME,
+        query_filter=_tenant_filter(organization_id, owner_id),
+        limit=limit,
+        with_payload=True,
+    )
+    return _points_to_chunks(result.points)
+
+
+async def sparse_search(query: str, organization_id: str | None, owner_id: str, limit: int = 10) -> list[RetrievedChunk]:
+    return await asyncio.to_thread(_sparse_only_sync, query, organization_id, owner_id, limit)
+
+
+def _hybrid_no_rerank_sync(
+    query: str, organization_id: str | None, owner_id: str, limit: int
+) -> list[RetrievedChunk]:
+    points, _texts = _hybrid_candidates_sync(query, organization_id, owner_id, limit)
+    return _points_to_chunks(points)
+
+
+async def hybrid_search_no_rerank(
+    query: str, organization_id: str | None, owner_id: str, limit: int = 10
+) -> list[RetrievedChunk]:
+    return await asyncio.to_thread(_hybrid_no_rerank_sync, query, organization_id, owner_id, limit)
+
+
+async def hybrid_search_reranked(
+    query: str, organization_id: str | None, owner_id: str, limit: int = 10
+) -> list[RetrievedChunk]:
+    """Same pipeline as `hybrid_search`, but returns the top `limit` reranked
+    results unfiltered by MIN_RERANK_SCORE/RERANK_TOP_K — the eval harness
+    needs a fixed-size ranked list per strategy to compute Recall@k/NDCG@k
+    consistently; production's score-floor behavior stays only in
+    `hybrid_search`/`_search_sync`."""
+
+    def _sync() -> list[RetrievedChunk]:
+        points, texts = _hybrid_candidates_sync(query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES)
+        if not points:
+            return []
+        rerank_scores = embeddings.rerank(query, texts)
+        scored = _points_to_chunks(points)
+        for chunk, score in zip(scored, rerank_scores):
+            chunk.score = float(score)
+        scored.sort(key=lambda c: c.score, reverse=True)
+        return scored[:limit]
+
+    return await asyncio.to_thread(_sync)
 
 
 def _upsert_sync(

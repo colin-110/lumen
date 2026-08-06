@@ -1,4 +1,4 @@
-.PHONY: up down build logs migrate seed install-backend install-frontend setup test lint
+.PHONY: up down build logs migrate seed install-backend install-frontend setup test lint eval-retrieval
 
 up:
 	docker-compose up -d
@@ -35,3 +35,6 @@ test:
 lint:
 	cd backend && poetry run ruff check .
 	cd frontend && npm run lint
+
+eval-retrieval:
+	cd backend && poetry run python -m app.evaluation.run
