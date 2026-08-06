@@ -43,6 +43,20 @@ documents versus general knowledge.
 - Never fabricate a citation number that wasn't given to you.
 """
 
+# Appended only when the context spans more than one document. Without this the
+# model tends to answer from whichever document it saw first and quietly ignore
+# the rest, which is exactly the failure mode for "does X match Y?" questions.
+MULTI_DOCUMENT_GUIDANCE = """
+You have been given context from MULTIPLE DIFFERENT DOCUMENTS. When the question
+involves comparing, reconciling or combining them:
+- Attribute each fact to the document it came from, by citation number.
+- State explicitly where the documents AGREE and where they CONFLICT. A
+  disagreement in dates, amounts, names or terms is usually the point of the
+  question — surface it rather than smoothing it over or picking one silently.
+- If a document you would need in order to answer is missing from the context,
+  say which one and what it would have to contain, instead of guessing.
+"""
+
 
 @dataclass
 class SourceRef:
@@ -74,6 +88,16 @@ def _format_context(sources: list[SourceRef]) -> str:
         return "No relevant internal documents were found for this question."
     blocks = [f"[{s.index}] (source: {s.filename})\n{s.snippet}" for s in sources]
     return "\n\n".join(blocks)
+
+
+def _system_prompt_for(sources: list[SourceRef]) -> str:
+    """Add cross-document instructions only when they apply, so single-document
+    questions aren't paying for prompt tokens telling the model to compare
+    things there is nothing to compare against."""
+    distinct_documents = {s.document_id for s in sources if s.document_id}
+    if len(distinct_documents) > 1:
+        return SYSTEM_PROMPT + MULTI_DOCUMENT_GUIDANCE
+    return SYSTEM_PROMPT
 
 
 def _build_sources(chunks: list[RetrievedChunk]) -> list[SourceRef]:
@@ -141,6 +165,7 @@ async def run(
     history: list[ChatMessage],
     organization_id: uuid.UUID | None,
     owner_id: uuid.UUID,
+    document_ids: list[str] | None = None,
 ) -> AsyncGenerator[PipelineEvent, None]:
     start = time.perf_counter()
     org_str = str(organization_id) if organization_id else None
@@ -151,20 +176,27 @@ async def run(
     # original phrasing (via `query`) plus the real history messages below.
     search_query = await _rewrite_query(query, history)
 
-    # 1. Semantic cache
-    cached = await semantic_cache.lookup(search_query, org_str, owner_str)
-    if cached is not None:
-        yield PipelineEvent("sources", cached.sources)
-        yield PipelineEvent("token", cached.answer)
-        yield PipelineEvent(
-            "done",
-            {"cached": True, "latency_ms": int((time.perf_counter() - start) * 1000)},
-        )
-        return
+    # 1. Semantic cache — bypassed entirely when the caller pinned a document
+    # set. Cache entries are keyed on question + tenant only, so serving one
+    # here would answer "compare A and B" with a cached answer built from a
+    # different document scope. Same failure class as serving a stale answer
+    # after an upload; the fix there was invalidation, and the fix here is not
+    # reading from a cache that can't represent the scope.
+    scoped = bool(document_ids)
+    if not scoped:
+        cached = await semantic_cache.lookup(search_query, org_str, owner_str)
+        if cached is not None:
+            yield PipelineEvent("sources", cached.sources)
+            yield PipelineEvent("token", cached.answer)
+            yield PipelineEvent(
+                "done",
+                {"cached": True, "latency_ms": int((time.perf_counter() - start) * 1000)},
+            )
+            return
 
     # 2. Retrieve
     try:
-        chunks = await hybrid_search(search_query, org_str, owner_str)
+        chunks = await hybrid_search(search_query, org_str, owner_str, document_ids)
     except Exception:
         logger.warning("Document retrieval failed; continuing with no document context", exc_info=True)
         chunks = []
@@ -182,7 +214,7 @@ async def run(
         web_block = "\n\n".join(f"- {r['title']}: {r['content'][:400]} ({r['url']})" for r in web_results)
         context += f"\n\nWeb search results (no internal documents matched):\n{web_block}"
 
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    messages = [{"role": "system", "content": _system_prompt_for(sources)}]
     for m in history[-settings.MAX_HISTORY_MESSAGES :]:
         messages.append({"role": m.role, "content": m.content})
     messages.append({"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"})
@@ -216,7 +248,10 @@ async def run(
     full_text = "".join(full_text_parts)
     latency_ms = int((time.perf_counter() - start) * 1000)
 
-    if full_text and chunks:
+    # Never store a scoped answer: it was produced from a caller-chosen subset
+    # of documents, so a later unscoped question that matched it would inherit
+    # a document scope it never asked for.
+    if full_text and chunks and not scoped:
         await semantic_cache.store(search_query, full_text, [s.__dict__ for s in sources], org_str, owner_str)
 
     yield PipelineEvent("done", {"cached": False, "latency_ms": latency_ms})

@@ -6,6 +6,7 @@ import { useQuery } from "@tanstack/react-query";
 import * as api from "@/lib/api-client";
 import { EXAMPLE_PROMPTS, type SuggestionPrompt } from "@/lib/suggestions";
 import type { UploadTask } from "@/lib/use-document-uploads";
+import { DocumentScopePicker } from "./DocumentScopePicker";
 
 interface ComposerProps {
   onSend: (message: string) => void;
@@ -14,12 +15,23 @@ interface ComposerProps {
   isStreaming: boolean;
   uploads: UploadTask[];
   onAttachFiles: (files: File[]) => void;
+  scopedDocumentIds: string[];
+  onScopeChange: (ids: string[]) => void;
 }
 
 const MAX_SUGGESTIONS = 6;
 const ACCEPT = ".pdf,.docx,.txt,.md,.csv";
 
-export function Composer({ onSend, onStop, disabled, isStreaming, uploads, onAttachFiles }: ComposerProps) {
+export function Composer({
+  onSend,
+  onStop,
+  disabled,
+  isStreaming,
+  uploads,
+  onAttachFiles,
+  scopedDocumentIds,
+  onScopeChange,
+}: ComposerProps) {
   const [value, setValue] = useState("");
   const [dismissed, setDismissed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -228,9 +240,17 @@ export function Composer({ onSend, onStop, disabled, isStreaming, uploads, onAtt
             </div>
           </div>
         </div>
-        <p className="mt-2 text-center text-[11px] text-muted-foreground">
-          Enter to send · Shift+Enter for a new line. Lumen can make mistakes — verify important facts.
-        </p>
+        <div className="mt-2 flex items-start justify-between gap-3">
+          <DocumentScopePicker
+            selectedIds={scopedDocumentIds}
+            onChange={onScopeChange}
+            disabled={disabled}
+          />
+          <p className="text-[11px] text-muted-foreground text-right pt-1">
+            Enter to send · Shift+Enter for a new line. Lumen can make mistakes — verify important
+            facts.
+          </p>
+        </div>
       </div>
     </div>
   );

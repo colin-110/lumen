@@ -40,6 +40,10 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
   const [historyLoading, setHistoryLoading] = useState(!!initialConversationId);
   const [streaming, setStreaming] = useState<StreamingState | null>(null);
   const [sending, setSending] = useState(false);
+  // Pinned document scope for the next message. Kept in the panel (not the
+  // composer) so it survives the composer clearing itself after a send —
+  // a follow-up comparison shouldn't silently widen back to every document.
+  const [scopedDocumentIds, setScopedDocumentIds] = useState<string[]>([]);
   const abortRef = useRef<AbortController | null>(null);
   const scrollAnchorRef = useRef<HTMLDivElement>(null);
 
@@ -111,6 +115,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
           text,
           conversationId,
           {
+            documentIds: scopedDocumentIds,
             onConversation: (id) => {
               if (!conversationIdRef.current) {
                 conversationIdRef.current = id;
@@ -158,7 +163,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
       setSending(false);
       queryClient.invalidateQueries({ queryKey: ["conversations"] });
     },
-    [conversationId, push, queryClient, router]
+    [conversationId, push, queryClient, router, scopedDocumentIds]
   );
 
   const handleStop = useCallback(() => {
@@ -206,6 +211,8 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
         isStreaming={sending}
         uploads={uploads}
         onAttachFiles={handleFiles}
+        scopedDocumentIds={scopedDocumentIds}
+        onScopeChange={setScopedDocumentIds}
       />
     </div>
   );

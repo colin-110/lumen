@@ -63,6 +63,9 @@ one command.
   dropped.
 - **Measured retrieval quality** — a golden-dataset harness scores Recall@k / MRR / NDCG across four
   retrieval strategies, so pipeline changes are judged by a number rather than by feel.
+- **Multi-document reasoning** — pin a question to several documents and the context budget is split
+  round-robin between them, so a long document can't crowd a short one out of a comparison; the
+  model is then instructed to attribute each fact and call out conflicts explicitly.
 
 ---
 
@@ -285,6 +288,49 @@ partial, quota-throttled run — run it against your own key to generate them.
 
 ---
 
+## Multi-document reasoning
+
+Questions like *"does this invoice match the contract?"* fail in a subtle way on a
+plain top-k RAG pipeline: retrieval ranks chunks globally, so a long document can consume the
+entire context budget and the short one never reaches the model. The answer then looks confident
+and is silently one-sided.
+
+Measured on this repo — a 7-chunk contract and a 1-chunk invoice, asked about service levels,
+liability and termination:
+
+| Selection | Chunks sent to the model |
+|---|---|
+| Global top-k (before) | 6 contract chunks, **0 invoice** — comparison impossible |
+| Fair allocation (after) | 5 contract + **1 invoice**, same budget |
+
+Selecting a document scope in the composer pins the question to those documents and fills the
+context budget **round-robin**: every pinned document contributes its best chunk before any
+contributes a second (`allocate_fairly` in `services/retrieval.py`). Within a scope the rerank
+score floor is deliberately not applied — excluding a document the user explicitly asked about
+would make the comparison unanswerable, and in the trace above the invoice's only chunk scored
+−11.4, far below the −6.0 floor. When the context spans more than one document the system prompt
+also gains cross-document instructions: attribute each fact to its source, and state explicitly
+where documents agree or conflict.
+
+Asking the real question against the pinned pair:
+
+> **No, invoice INV-8842 does not match the contract.** There are conflicts in both the payment
+> terms and the egress overage rate:
+> - **Payment Terms** — Invoice: NET 15 [1]. Contract: NET 30 [3]. *Conflict.*
+> - **Egress Overage** — Invoice: $95.00 per TB [1]. Contract: $80 per TB [4]. *Conflict.*
+
+Two design notes:
+
+- **Default chat is unchanged.** With no scope selected, retrieval behaves exactly as before
+  (global top-k above the score floor). Fair allocation only applies to an explicit scope, so
+  single-document questions can't regress.
+- **Scoped questions bypass the semantic cache entirely**, in both directions. Cache entries are
+  keyed on question + tenant with no notion of document scope, so serving one would answer
+  "compare A and B" from a different document set — the same failure class as serving a stale
+  answer after an upload.
+
+---
+
 ## Retrieval debugger
 
 Aggregate metrics tell you *whether* retrieval is working; they don't tell you *why* a specific
@@ -464,6 +510,11 @@ monitoring/
   harness to ~8 questions per day.
 - **Single-judge generation eval** — faithfulness/hallucination scores come from one LLM judge with
   no human-agreement calibration, so treat them as a regression signal, not ground truth.
+- **Comparison scope is manual** — you pick which documents to compare; nothing detects that a
+  question is comparative and selects them for you.
+- **Fair allocation is scope-only** — it deliberately doesn't apply to unscoped chat, so an
+  unpinned comparative question can still end up one-sided. Making it the global default needs an
+  eval set with multi-chunk documents to prove it doesn't regress single-document questions.
 - **Single-region, single-instance** by default — horizontal scaling works (stateless
   backend/frontend, replica-friendly worker) but isn't wired up as infra-as-code yet.
 

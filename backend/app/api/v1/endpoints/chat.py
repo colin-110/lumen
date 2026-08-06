@@ -53,7 +53,11 @@ async def chat(
     cached = False
     latency_ms = 0
 
-    async for event in agent_service.run(request.message, history, current_user.organization_id, current_user.id):
+    doc_ids = [str(d) for d in request.document_ids] if request.document_ids else None
+
+    async for event in agent_service.run(
+        request.message, history, current_user.organization_id, current_user.id, doc_ids
+    ):
         if event.type == "sources":
             sources = event.data
         elif event.type == "token":
@@ -94,6 +98,8 @@ async def chat_stream(
     await crud_conversation.add_message(db, convo.id, MessageRole.USER, request.message)
     await crud_conversation.rename_if_default(db, convo, request.message)
 
+    doc_ids = [str(d) for d in request.document_ids] if request.document_ids else None
+
     async def event_generator():
         def frame(event_type: str, data: Any) -> str:
             return f"data: {json.dumps({'type': event_type, 'data': data}, default=str)}\n\n"
@@ -107,7 +113,7 @@ async def chat_stream(
 
         try:
             async for event in agent_service.run(
-                request.message, history, current_user.organization_id, current_user.id
+                request.message, history, current_user.organization_id, current_user.id, doc_ids
             ):
                 if event.type == "sources":
                     sources = event.data

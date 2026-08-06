@@ -41,6 +41,11 @@ class ConversationCreate(BaseModel):
 class ChatRequest(BaseModel):
     message: str
     conversation_id: uuid.UUID | None = None
+    # Pin the answer to specific documents (e.g. "does this invoice match this
+    # contract?"). Retrieval is restricted to them and the context budget is
+    # split fairly across them, so a long document can't crowd out a short one.
+    # Omit to search everything, which stays the default.
+    document_ids: list[uuid.UUID] | None = None
 
 
 class ChatSource(BaseModel):
