@@ -33,6 +33,7 @@ class GoldenQuestion:
     question: str
     relevant_doc_keys: list[str] = field(default_factory=list)
     style: str = "paraphrase"  # "keyword" or "paraphrase" — see module docstring
+    expected_answer: str = ""  # ground truth, used by the generation eval harness's LLM judge
 
 
 DOCUMENTS: list[GoldenDocument] = [
@@ -137,31 +138,108 @@ DOCUMENTS: list[GoldenDocument] = [
 ]
 
 QUESTIONS: list[GoldenQuestion] = [
-    GoldenQuestion("What invoice number was first issued under the new billing system?", ["billing"], "keyword"),
-    GoldenQuestion("How much paid time off do new parents get?", ["parental_leave"], "paraphrase"),
-    GoldenQuestion("Which CVE was fixed in the March security release?", ["security_patch"], "keyword"),
-    GoldenQuestion("What was the revenue figure last quarter and how did it change?", ["finance_q3"], "paraphrase"),
-    GoldenQuestion("What should a new employee finish during their first few days?", ["onboarding"], "paraphrase"),
-    GoldenQuestion("What port does the WireGuard VPN listen on?", ["vpn_setup"], "keyword"),
-    GoldenQuestion("What's the daily cap for meals while traveling for work?", ["expense_policy"], "paraphrase"),
-    GoldenQuestion("How long did incident INC-4471 last?", ["incident_4471"], "keyword"),
-    GoldenQuestion("How often does the company formally evaluate employee performance?", ["perf_review"], "paraphrase"),
-    GoldenQuestion("What's the per-minute request limit for an API key?", ["api_ratelimit"], "keyword"),
-    GoldenQuestion("How long are application logs kept before they're deleted?", ["data_retention"], "paraphrase"),
-    GoldenQuestion("What travel class should be used for short flights?", ["travel_policy"], "paraphrase"),
-    GoldenQuestion("How often do employees get a new company laptop?", ["equipment_policy"], "paraphrase"),
-    GoldenQuestion("What's the referral bonus amount and when is it paid out?", ["referral_bonus"], "keyword"),
-    GoldenQuestion("How long does a primary on-call shift last?", ["oncall_rotation"], "paraphrase"),
+    GoldenQuestion(
+        "What invoice number was first issued under the new billing system?",
+        ["billing"],
+        "keyword",
+        "INV-2291",
+    ),
+    GoldenQuestion(
+        "How much paid time off do new parents get?",
+        ["parental_leave"],
+        "paraphrase",
+        "16 weeks of fully paid leave, which can be split into two blocks within the first year.",
+    ),
+    GoldenQuestion(
+        "Which CVE was fixed in the March security release?",
+        ["security_patch"],
+        "keyword",
+        "CVE-2024-9981, a critical-severity vulnerability allowing unauthenticated access to internal admin routes.",
+    ),
+    GoldenQuestion(
+        "What was the revenue figure last quarter and how did it change?",
+        ["finance_q3"],
+        "paraphrase",
+        "$1.2 million, up 18% from the prior quarter, with gross margin holding steady at 62%.",
+    ),
+    GoldenQuestion(
+        "What should a new employee finish during their first few days?",
+        ["onboarding"],
+        "paraphrase",
+        "Laptop setup, badge activation, and the benefits enrollment form, within the first three days.",
+    ),
+    GoldenQuestion(
+        "What port does the WireGuard VPN listen on?",
+        ["vpn_setup"],
+        "keyword",
+        "Port 51820.",
+    ),
+    GoldenQuestion(
+        "What's the daily cap for meals while traveling for work?",
+        ["expense_policy"],
+        "paraphrase",
+        "$75 per day, with receipts required for any single expense over $25.",
+    ),
+    GoldenQuestion(
+        "How long did incident INC-4471 last?",
+        ["incident_4471"],
+        "keyword",
+        "47 minutes, caused by a misconfigured connection pool limit after a routine deploy.",
+    ),
+    GoldenQuestion(
+        "How often does the company formally evaluate employee performance?",
+        ["perf_review"],
+        "paraphrase",
+        "Twice a year, in April and October.",
+    ),
+    GoldenQuestion(
+        "What's the per-minute request limit for an API key?",
+        ["api_ratelimit"],
+        "keyword",
+        "1000 requests per minute; requests beyond that get an HTTP 429 with a Retry-After header.",
+    ),
+    GoldenQuestion(
+        "How long are application logs kept before they're deleted?",
+        ["data_retention"],
+        "paraphrase",
+        "90 days for application logs; audit logs covering account access are kept for 3 years.",
+    ),
+    GoldenQuestion(
+        "What travel class should be used for short flights?",
+        ["travel_policy"],
+        "paraphrase",
+        "Economy class, for flights under six hours.",
+    ),
+    GoldenQuestion(
+        "How often do employees get a new company laptop?",
+        ["equipment_policy"],
+        "paraphrase",
+        "Every three years, though an earlier replacement can be requested if IT confirms a hardware failure.",
+    ),
+    GoldenQuestion(
+        "What's the referral bonus amount and when is it paid out?",
+        ["referral_bonus"],
+        "keyword",
+        "$2,000, paid after the referred hire completes 90 days of employment.",
+    ),
+    GoldenQuestion(
+        "How long does a primary on-call shift last?",
+        ["oncall_rotation"],
+        "paraphrase",
+        "One full week, with a backup engineer assigned each rotation.",
+    ),
     # Multi-relevant: exercises Recall@k/NDCG on questions with more than one
     # correct source rather than just precision on a single hit.
     GoldenQuestion(
         "Which policies mention a specific dollar amount?",
         ["expense_policy", "referral_bonus", "finance_q3"],
         "paraphrase",
+        "The expense policy ($75/day meal cap), the referral bonus ($2,000), and Q3 revenue ($1.2 million).",
     ),
     GoldenQuestion(
         "Which documents reference a specific incident or vulnerability ID?",
         ["incident_4471", "security_patch"],
         "keyword",
+        "Incident INC-4471 and CVE-2024-9981.",
     ),
 ]

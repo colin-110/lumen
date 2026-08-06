@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-29%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-35%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -227,7 +227,13 @@ silently regress).
 
 ---
 
-## Retrieval evaluation
+## Evaluation
+
+Two harnesses, both driven by one hand-authored golden dataset
+(`backend/app/evaluation/golden_dataset.py`): 15 fixture documents and 17 questions with known
+correct source documents and known correct answers.
+
+### Retrieval
 
 `make eval-retrieval` runs a golden-dataset harness (`backend/app/evaluation/`) that measures
 retrieval quality directly — no LLM calls, no API cost, safe to re-run after any change to
@@ -248,17 +254,38 @@ unambiguous to hand-verify), which is why every strategy scores well — the gap
 widens on noisier, larger, more ambiguous real-world corpora. Extend it by adding entries to
 `DOCUMENTS`/`QUESTIONS` in `app/evaluation/golden_dataset.py`; nothing else needs to change.
 
-Generation-quality evaluation (faithfulness, hallucination rate, answer relevancy) isn't
-implemented yet — see Known limitations.
+### Generation
+
+`make eval-generation` scores the *answers*, not just the retrieved chunks. Each question runs
+through the real pipeline (same retrieval, same system prompt, same LiteLLM router as production
+chat), then an LLM judge grades the result on:
+
+- **Faithfulness** — what fraction of the answer's factual claims are actually supported by the
+  retrieved context (an unsupported claim is a hallucination, even if it happens to be true)
+- **Answer relevancy** — does it address what was asked
+- **Answer correctness** — does it match the golden expected answer
+- **Hallucination rate** — share of answers containing at least one unsupported claim, plus the
+  specific offending claims, printed per-question
+
+The judge is a structured-output prompt through the existing LiteLLM router rather than Ragas or
+DeepEval — those pull in `langchain-core`/`datasets`/`pandas`, which contradicts this project's
+deliberate no-LangChain dependency stance (see `pyproject.toml`) for no capability this needs.
+
+⚠️ Unlike the retrieval harness, this one costs real tokens: **2 LLM calls per question**. Gemini's
+free tier caps this model at **20 requests/day and 5/minute**, so the harness evaluates only the
+first 8 questions by default (~16 calls). Pass a count to widen the sample on a paid key:
+`python -m app.evaluation.run_generation 17`. Results are omitted here rather than reported from a
+partial, quota-throttled run — run it against your own key to generate them.
 
 ---
 
 ## Testing & CI
 
 ```bash
-make test            # pytest — auth, chunking, config-parsing, retrieval-metric tests
+make test             # pytest — auth, chunking, config-parsing, eval-metric/judge tests
 make lint             # ruff (backend) + eslint (frontend)
-make eval-retrieval   # retrieval quality harness — see "Retrieval evaluation" above
+make eval-retrieval   # retrieval quality harness — free, no LLM calls
+make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above
 ```
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint + test on the backend and lint + type-check +
@@ -367,7 +394,7 @@ backend/
     models/ schemas/     # SQLAlchemy models + Pydantic schemas
     services/            # retrieval, embeddings, agent pipeline, LLM router, storage
     tasks/                # Celery document ingestion
-    evaluation/           # golden-dataset retrieval eval harness (make eval-retrieval)
+    evaluation/           # golden-dataset retrieval + generation eval harnesses
   alembic/               # migrations
   tests/                  # pytest suite
 frontend/
@@ -387,8 +414,11 @@ monitoring/
 - **Chunking is structure-blind** — fixed 1000-char windows, no awareness of headings/tables.
 - **No relevance grading step** — retrieved chunks reach the model based on the reranker score
   alone; nothing double-checks relevance with a second LLM pass.
-- **No generation eval** — retrieval quality is measured (`make eval-retrieval`), but faithfulness,
-  hallucination rate, and answer relevancy of the LLM's generated answers are still judged by hand.
+- **Eval set is small** — 15 documents / 17 questions, hand-authored and topically distinct. Enough
+  to catch a regression, not enough to be a benchmark; a free-tier LLM key also caps the generation
+  harness to ~8 questions per day.
+- **Single-judge generation eval** — faithfulness/hallucination scores come from one LLM judge with
+  no human-agreement calibration, so treat them as a regression signal, not ground truth.
 - **Single-region, single-instance** by default — horizontal scaling works (stateless
   backend/frontend, replica-friendly worker) but isn't wired up as infra-as-code yet.
 
@@ -397,7 +427,7 @@ monitoring/
 - LLM-based relevance grading before generation
 - Structure-aware chunking (headings/paragraphs, not raw character counts)
 - HyDE (hypothetical document embeddings) for retrieval
-- Generation-quality eval (Ragas/DeepEval) — faithfulness, hallucination rate, answer relevancy
+- Larger eval set + human-calibrated judge agreement, and eval wired into CI as a regression gate
 - GPU execution provider for embedding/reranking at higher throughput
 - Terraform/CDK for the managed-services deployment path
 
