@@ -11,6 +11,7 @@ import {
   Moon,
   Sparkles,
   Sun,
+  Terminal,
   Trash2,
 } from "lucide-react";
 import * as api from "@/lib/api-client";
@@ -83,6 +84,23 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           <FileText size={16} />
           Documents
         </Link>
+        {/* Developer-mode surface: exposes the system prompt and raw indexed
+            chunks, so it's superuser-gated on the API too — hiding the link
+            alone would not be a control. */}
+        {user?.is_superuser && (
+          <Link
+            href="/debug"
+            onClick={onNavigate}
+            className={`w-full flex items-center gap-2 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors ${
+              pathname === "/debug"
+                ? "bg-accent text-accent-foreground"
+                : "text-foreground hover:bg-surface-hover"
+            }`}
+          >
+            <Terminal size={16} />
+            Retrieval debugger
+          </Link>
+        )}
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin px-2.5 pb-2">

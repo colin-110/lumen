@@ -65,3 +65,34 @@ export interface StreamEvent {
   type: "conversation" | "sources" | "token" | "done" | "error";
   data: unknown;
 }
+
+export interface DebugChunk {
+  rank: number;
+  chunk_id: string;
+  document_id: string;
+  filename: string;
+  snippet: string;
+  score: number;
+  /** Rank in the preceding stage, or null if it wasn't present there. */
+  previous_rank: number | null;
+}
+
+export interface DebugStage {
+  key: string;
+  label: string;
+  description: string;
+  duration_ms: number;
+  chunks: DebugChunk[];
+}
+
+export interface RetrievalDebug {
+  question: string;
+  rewritten_query: string;
+  rewrite_applied: boolean;
+  cache_hit: boolean;
+  cache_note: string;
+  stages: DebugStage[];
+  final_prompt: string;
+  answer: string | null;
+  total_ms: number;
+}
