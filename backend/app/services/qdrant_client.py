@@ -94,3 +94,15 @@ def delete_document_points(document_id: str) -> None:
             )
         ),
     )
+
+
+def delete_owner_points(owner_id: str) -> None:
+    """Wipe every chunk indexed under a given owner_id. Used by the retrieval
+    eval harness to clear its isolated fixture namespace between runs — not
+    called from any user-facing path."""
+    client.delete(
+        collection_name=COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(must=[models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))])
+        ),
+    )
