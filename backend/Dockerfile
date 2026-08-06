@@ -20,7 +20,13 @@ ENV PIP_NO_CACHE_DIR=1 \
 # poetry just to immediately disable its virtualenv.
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install --prefix=/install .
+RUN pip install --prefix=/install . \
+    # The `onnx` package (a fastembed dependency) ships its own test-suite
+    # fixtures inside site-packages — dead weight that's never imported at
+    # runtime, ~70MB. Strip it here, before it's copied into the runtime
+    # stage below — deleting it in a later layer wouldn't shrink the image,
+    # since earlier layers keep the bytes regardless.
+    && rm -rf /install/lib/python3.12/site-packages/onnx/backend/test
 
 # --- runtime: slim, no compilers, just the installed packages + app ------
 FROM python:3.12-slim AS runtime

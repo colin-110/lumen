@@ -15,6 +15,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   redis:
     image: redis:7
@@ -33,6 +37,10 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
   qdrant:
     image: qdrant/qdrant:latest
@@ -42,6 +50,10 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   minio:
     image: minio/minio:latest
@@ -61,9 +73,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
+    deploy:
+      resources:
+        limits:
+          memory: 256m
 
   backend:
     build: ./backend
+    image: lumen-backend:latest
     container_name: enterprise_ai_backend
     ports:
       - "8000:8000"
@@ -101,7 +118,10 @@ services:
           memory: 900m
 
   worker:
-    build: ./backend
+    # Reuses the backend service's build instead of building its own
+    # near-identical ~1.7GB image from the same Dockerfile/deps — only the
+    # `command` differs, so one built image serves both roles.
+    image: lumen-backend:latest
     container_name: enterprise_ai_worker
     command: ["celery", "-A", "app.core.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "ingestion"]
     env_file:
@@ -161,7 +181,10 @@ services:
           memory: 200m
 
   grafana:
-    image: grafana/grafana:latest
+    # grafana-oss excludes the bundled enterprise plugins/features this
+    # project never uses — meaningfully smaller image for the same
+    # dashboards, since only Prometheus is wired up as a datasource here.
+    image: grafana/grafana-oss:latest
     container_name: enterprise_ai_grafana
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
@@ -178,7 +201,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 200m
+          memory: 256m
 
 volumes:
   postgres_data:
