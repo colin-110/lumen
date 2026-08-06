@@ -38,11 +38,11 @@ from app.services import retrieval, semantic_cache
 # prompt or source formatting itself would drift from what chat really sends,
 # which defeats the point of inspecting it.
 from app.services.agent import (
-    SYSTEM_PROMPT,
     ChatMessage,
     _build_sources,
     _format_context,
     _rewrite_query,
+    _system_prompt_for,
 )
 from app.services.llm_router import MODEL_ALIAS, get_router
 
@@ -76,6 +76,7 @@ async def debug_retrieval(
     started = time.perf_counter()
     org_str = str(current_user.organization_id) if current_user.organization_id else None
     owner_str = str(current_user.id)
+    doc_ids = [str(d) for d in request.document_ids] if request.document_ids else None
 
     # --- 1. query rewrite (only with conversation history) -----------------
     history: list[ChatMessage] = []
@@ -124,7 +125,7 @@ async def debug_retrieval(
         "Dense vector search",
         f"Top {STAGE_LIMIT} by cosine similarity on {settings.DENSE_MODEL} embeddings. Catches semantic "
         "matches even when no words overlap.",
-        lambda: retrieval.dense_search(search_query, org_str, owner_str, STAGE_LIMIT),
+        lambda: retrieval.dense_search(search_query, org_str, owner_str, STAGE_LIMIT, doc_ids),
         None,
     )
     await add_stage(
@@ -132,7 +133,7 @@ async def debug_retrieval(
         "Sparse / BM25 search",
         f"Top {STAGE_LIMIT} by {settings.SPARSE_MODEL} term matching. Catches exact identifiers "
         "(error codes, part numbers) that dense embeddings blur together.",
-        lambda: retrieval.sparse_search(search_query, org_str, owner_str, STAGE_LIMIT),
+        lambda: retrieval.sparse_search(search_query, org_str, owner_str, STAGE_LIMIT, doc_ids),
         None,
     )
     _, fused = await add_stage(
@@ -140,7 +141,7 @@ async def debug_retrieval(
         "RRF fusion",
         "Both result lists merged by Reciprocal Rank Fusion — rank-based, so the two scoring scales "
         "never need to be normalised against each other.",
-        lambda: retrieval.hybrid_search_no_rerank(search_query, org_str, owner_str, STAGE_LIMIT),
+        lambda: retrieval.hybrid_search_no_rerank(search_query, org_str, owner_str, STAGE_LIMIT, doc_ids),
         None,
     )
     _, reranked = await add_stage(
@@ -148,16 +149,25 @@ async def debug_retrieval(
         "Cross-encoder rerank",
         f"{settings.RERANK_MODEL} scores each candidate against the query jointly, rather than comparing "
         "two independently-computed vectors. This is the step that fixes fusion's ordering.",
-        lambda: retrieval.hybrid_search_reranked(search_query, org_str, owner_str, STAGE_LIMIT),
+        lambda: retrieval.hybrid_search_reranked(search_query, org_str, owner_str, STAGE_LIMIT, doc_ids),
         fused,
+    )
+    selected_description = (
+        f"Scoped to {len(doc_ids)} pinned document(s): the {settings.RERANK_TOP_K}-chunk budget is "
+        "filled round-robin so every pinned document contributes its best chunk before any "
+        "contributes a second — otherwise a long document crowds a short one out of the comparison."
+        if doc_ids
+        else (
+            f"Production cut: keep rerank score >= {settings.MIN_RERANK_SCORE}, take at most "
+            f"{settings.RERANK_TOP_K}. If the floor removes everything, the best 3 are kept anyway "
+            "so the model still has something to reason from."
+        )
     )
     selected_raw, _ = await add_stage(
         "selected",
         "Selected for the prompt",
-        f"Production cut: keep rerank score >= {settings.MIN_RERANK_SCORE}, take at most "
-        f"{settings.RERANK_TOP_K}. If the floor removes everything, the best 3 are kept anyway so the "
-        "model still has something to reason from.",
-        lambda: retrieval.hybrid_search(search_query, org_str, owner_str),
+        selected_description,
+        lambda: retrieval.hybrid_search(search_query, org_str, owner_str, doc_ids),
         reranked,
     )
 
@@ -165,7 +175,10 @@ async def debug_retrieval(
     sources = _build_sources(selected_raw)
     context = _format_context(sources)
     user_turn = f"CONTEXT:\n{context}\n\nQUESTION:\n{request.message}"
-    final_prompt = f"[system]\n{SYSTEM_PROMPT}\n\n[user]\n{user_turn}"
+    # Resolved exactly the way chat resolves it, so a multi-document trace
+    # shows the cross-document instructions the model will actually receive.
+    system_prompt = _system_prompt_for(sources)
+    final_prompt = f"[system]\n{system_prompt}\n\n[user]\n{user_turn}"
 
     # --- 5. optional generation ---------------------------------------------
     answer: str | None = None
@@ -173,7 +186,7 @@ async def debug_retrieval(
         resp = await get_router().acompletion(
             model=MODEL_ALIAS,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_turn},
             ],
             stream=False,

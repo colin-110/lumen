@@ -37,16 +37,64 @@ class RetrievedChunk:
     score: float
 
 
-def _tenant_filter(organization_id: str | None, owner_id: str) -> models.Filter:
+def _tenant_filter(
+    organization_id: str | None, owner_id: str, document_ids: list[str] | None = None
+) -> models.Filter:
     # Documents are visible within an organization; users without an org
     # only see their own uploads.
     if organization_id:
-        return models.Filter(
-            must=[models.FieldCondition(key="organization_id", match=models.MatchValue(value=organization_id))]
-        )
-    return models.Filter(
-        must=[models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))]
-    )
+        must = [models.FieldCondition(key="organization_id", match=models.MatchValue(value=organization_id))]
+    else:
+        must = [models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))]
+    if document_ids:
+        # Narrow to an explicit document set on top of — never instead of —
+        # the tenant scope, so a caller-supplied id can't reach another org's
+        # chunks.
+        must.append(models.FieldCondition(key="document_id", match=models.MatchAny(any=list(document_ids))))
+    return models.Filter(must=must)
+
+
+def allocate_fairly(chunks: list[RetrievedChunk], limit: int) -> list[RetrievedChunk]:
+    """Fill a context budget round-robin across documents instead of by pure
+    global rank.
+
+    Straight top-k lets one long document monopolise the budget: a 7-chunk
+    contract measured here took 3 of 6 slots, and with a couple more chunks it
+    would crowd the invoice out entirely — at which point a "does the invoice
+    match the contract?" question is unanswerable no matter how good the model
+    is, because half the comparison never reaches the prompt.
+
+    Passes take the next-best remaining chunk from each document in turn, so
+    every document contributes its best chunk before any document contributes
+    a second. Relative order within a document is preserved, and the input is
+    assumed to be sorted best-first.
+    """
+    if limit <= 0:
+        return []
+
+    by_doc: dict[str, list[RetrievedChunk]] = {}
+    for chunk in chunks:
+        by_doc.setdefault(chunk.document_id, []).append(chunk)
+
+    # Document order follows each document's best-ranked chunk, so the most
+    # relevant document still leads the context.
+    doc_order = list(by_doc.keys())
+
+    selected: list[RetrievedChunk] = []
+    depth = 0
+    while len(selected) < limit:
+        progressed = False
+        for doc_id in doc_order:
+            queue = by_doc[doc_id]
+            if depth < len(queue):
+                selected.append(queue[depth])
+                progressed = True
+                if len(selected) == limit:
+                    break
+        if not progressed:
+            break  # every document exhausted
+        depth += 1
+    return selected
 
 
 def _points_to_chunks(points) -> list[RetrievedChunk]:
@@ -63,14 +111,18 @@ def _points_to_chunks(points) -> list[RetrievedChunk]:
 
 
 def _hybrid_candidates_sync(
-    query: str, organization_id: str | None, owner_id: str, candidates: int
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    candidates: int,
+    document_ids: list[str] | None = None,
 ) -> tuple[list, list[str]]:
     """Shared prefetch+RRF step behind both `hybrid_search` (reranked, used in
     production) and `hybrid_search_no_rerank` (used by the retrieval eval
     harness to isolate what RRF fusion alone contributes vs. the reranker)."""
     dense_vec = embeddings.embed_dense_one(query)
     sparse = embeddings.embed_sparse_one(query)
-    query_filter = _tenant_filter(organization_id, owner_id)
+    query_filter = _tenant_filter(organization_id, owner_id, document_ids)
 
     result = qdrant.query_points(
         collection_name=COLLECTION_NAME,
@@ -97,8 +149,15 @@ def _hybrid_candidates_sync(
     return points, texts
 
 
-def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list[RetrievedChunk]:
-    points, texts = _hybrid_candidates_sync(query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES)
+def _search_sync(
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    document_ids: list[str] | None = None,
+) -> list[RetrievedChunk]:
+    points, texts = _hybrid_candidates_sync(
+        query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES, document_ids
+    )
     if not points:
         return []
 
@@ -114,6 +173,15 @@ def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list
         for p, score in zip(points, rerank_scores)
     ]
     scored.sort(key=lambda c: c.score, reverse=True)
+
+    if document_ids:
+        # Explicit multi-document scope: the user named these documents, so
+        # every one of them should get a voice in the context rather than
+        # letting the longest crowd the others out. The floor is intentionally
+        # not applied here — excluding a document the user explicitly asked
+        # about would silently make the comparison unanswerable.
+        return allocate_fairly(scored, settings.RERANK_TOP_K)
+
     top = [c for c in scored if c.score >= settings.MIN_RERANK_SCORE][: settings.RERANK_TOP_K]
     # If the score floor filtered out everything, fall back to the best few
     # candidates rather than returning nothing — a weak match still beats no
@@ -121,8 +189,17 @@ def _search_sync(query: str, organization_id: str | None, owner_id: str) -> list
     return top or scored[: min(3, len(scored))]
 
 
-async def hybrid_search(query: str, organization_id: str | None, owner_id: str) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_search_sync, query, organization_id, owner_id)
+async def hybrid_search(
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    document_ids: list[str] | None = None,
+) -> list[RetrievedChunk]:
+    """Production retrieval. Passing `document_ids` scopes the search to those
+    documents and splits the context budget fairly between them — see
+    `allocate_fairly`. Without it, behaviour is unchanged: global top-k above
+    the rerank score floor."""
+    return await asyncio.to_thread(_search_sync, query, organization_id, owner_id, document_ids)
 
 
 # --- strategy variants below, used only by the retrieval eval harness
@@ -130,55 +207,67 @@ async def hybrid_search(query: str, organization_id: str | None, owner_id: str) 
 # contributes. Production chat always uses `hybrid_search` above.
 
 
-def _dense_only_sync(query: str, organization_id: str | None, owner_id: str, limit: int) -> list[RetrievedChunk]:
+def _dense_only_sync(
+    query: str, organization_id: str | None, owner_id: str, limit: int, document_ids: list[str] | None = None
+) -> list[RetrievedChunk]:
     dense_vec = embeddings.embed_dense_one(query)
     result = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=dense_vec,
         using=DENSE_VECTOR_NAME,
-        query_filter=_tenant_filter(organization_id, owner_id),
+        query_filter=_tenant_filter(organization_id, owner_id, document_ids),
         limit=limit,
         with_payload=True,
     )
     return _points_to_chunks(result.points)
 
 
-async def dense_search(query: str, organization_id: str | None, owner_id: str, limit: int = 10) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_dense_only_sync, query, organization_id, owner_id, limit)
+async def dense_search(
+    query: str, organization_id: str | None, owner_id: str, limit: int = 10, document_ids: list[str] | None = None
+) -> list[RetrievedChunk]:
+    return await asyncio.to_thread(_dense_only_sync, query, organization_id, owner_id, limit, document_ids)
 
 
-def _sparse_only_sync(query: str, organization_id: str | None, owner_id: str, limit: int) -> list[RetrievedChunk]:
+def _sparse_only_sync(
+    query: str, organization_id: str | None, owner_id: str, limit: int, document_ids: list[str] | None = None
+) -> list[RetrievedChunk]:
     sparse = embeddings.embed_sparse_one(query)
     result = qdrant.query_points(
         collection_name=COLLECTION_NAME,
         query=models.SparseVector(indices=sparse["indices"], values=sparse["values"]),
         using=SPARSE_VECTOR_NAME,
-        query_filter=_tenant_filter(organization_id, owner_id),
+        query_filter=_tenant_filter(organization_id, owner_id, document_ids),
         limit=limit,
         with_payload=True,
     )
     return _points_to_chunks(result.points)
 
 
-async def sparse_search(query: str, organization_id: str | None, owner_id: str, limit: int = 10) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_sparse_only_sync, query, organization_id, owner_id, limit)
+async def sparse_search(
+    query: str, organization_id: str | None, owner_id: str, limit: int = 10, document_ids: list[str] | None = None
+) -> list[RetrievedChunk]:
+    return await asyncio.to_thread(_sparse_only_sync, query, organization_id, owner_id, limit, document_ids)
 
 
 def _hybrid_no_rerank_sync(
-    query: str, organization_id: str | None, owner_id: str, limit: int
+    query: str, organization_id: str | None, owner_id: str, limit: int, document_ids: list[str] | None = None
 ) -> list[RetrievedChunk]:
-    points, _texts = _hybrid_candidates_sync(query, organization_id, owner_id, limit)
+    points, _texts = _hybrid_candidates_sync(query, organization_id, owner_id, limit, document_ids)
     return _points_to_chunks(points)
 
 
 async def hybrid_search_no_rerank(
-    query: str, organization_id: str | None, owner_id: str, limit: int = 10
+    query: str, organization_id: str | None, owner_id: str, limit: int = 10, document_ids: list[str] | None = None
 ) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_hybrid_no_rerank_sync, query, organization_id, owner_id, limit)
+    return await asyncio.to_thread(_hybrid_no_rerank_sync, query, organization_id, owner_id, limit, document_ids)
 
 
 async def hybrid_search_reranked(
-    query: str, organization_id: str | None, owner_id: str, limit: int = 10
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int = 10,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
     """Same pipeline as `hybrid_search`, but returns the top `limit` reranked
     results unfiltered by MIN_RERANK_SCORE/RERANK_TOP_K — the eval harness
@@ -187,7 +276,9 @@ async def hybrid_search_reranked(
     `hybrid_search`/`_search_sync`."""
 
     def _sync() -> list[RetrievedChunk]:
-        points, texts = _hybrid_candidates_sync(query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES)
+        points, texts = _hybrid_candidates_sync(
+            query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES, document_ids
+        )
         if not points:
             return []
         rerank_scores = embeddings.rerank(query, texts)

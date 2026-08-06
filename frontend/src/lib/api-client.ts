@@ -293,6 +293,9 @@ export async function debugRetrieval(
 // ---------------------------------------------------------------- chat
 
 export interface StreamHandlers {
+  /** Restrict retrieval to these documents and split the context budget
+   * across them. Empty/omitted searches everything (the default). */
+  documentIds?: string[];
   onConversation?: (id: string) => void;
   onSources?: (sources: ChatSource[]) => void;
   onToken?: (token: string) => void;
@@ -313,7 +316,11 @@ export async function streamChat(
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
-    body: JSON.stringify({ message, conversation_id: conversationId ?? null }),
+    body: JSON.stringify({
+      message,
+      conversation_id: conversationId ?? null,
+      document_ids: handlers.documentIds?.length ? handlers.documentIds : null,
+    }),
     signal,
   });
 

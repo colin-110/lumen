@@ -34,6 +34,9 @@ class RetrievalDebugRequest(BaseModel):
     # Off by default — the retrieval stages are all local/free, but generating
     # the answer spends provider quota.
     generate_answer: bool = False
+    # Pin the trace to specific documents, matching what chat does when a
+    # comparison scope is set, so the fair-allocation step can be inspected.
+    document_ids: list[uuid.UUID] | None = None
 
 
 class RetrievalDebugResponse(BaseModel):
