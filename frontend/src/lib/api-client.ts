@@ -1,5 +1,6 @@
 import type {
   ChatSource,
+  LLMError,
   Conversation,
   ConversationDetail,
   DocumentItem,
@@ -300,7 +301,7 @@ export interface StreamHandlers {
   onSources?: (sources: ChatSource[]) => void;
   onToken?: (token: string) => void;
   onDone?: (info: { cached: boolean; latency_ms: number }) => void;
-  onError?: (message: string) => void;
+  onError?: (error: LLMError | string) => void;
 }
 
 export async function streamChat(
@@ -367,7 +368,13 @@ export async function streamChat(
           handlers.onDone?.(event.data as { cached: boolean; latency_ms: number });
           break;
         case "error":
-          handlers.onError?.(String(event.data));
+          // Newer backends send a structured LLMError; older ones sent a bare
+          // string. Accept both so a version skew degrades instead of breaking.
+          handlers.onError?.(
+            event.data && typeof event.data === "object"
+              ? (event.data as LLMError)
+              : String(event.data)
+          );
           break;
       }
     }

@@ -89,6 +89,22 @@ async def _process_document(document_id: str) -> None:
                 os.remove(tmp_path)
 
 
+async def ingest_document_inline(document_id: str) -> None:
+    """Run ingestion in the API process, for deployments running without a
+    Celery worker (see settings.INGEST_INLINE).
+
+    Reuses `_process_document` verbatim so the two modes can't drift — the
+    only difference is who calls it and what happens on failure. There's no
+    retry here: `_process_document` already records permanent failures on the
+    row, and a transient failure surfaces as a FAILED document the user can
+    re-upload, rather than silently disappearing.
+    """
+    try:
+        await _process_document(document_id)
+    except Exception:
+        logger.error("Inline ingestion failed for document %s", document_id, exc_info=True)
+
+
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10, acks_late=True)
 def process_document(self, document_id: str):
     """Parse, chunk, embed and index a document. Retries on transient failure

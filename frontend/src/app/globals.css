@@ -25,6 +25,11 @@
   --success: #16a34a;
   --success-bg: #f0fdf4;
 
+  /* Quota / rate-limit notices: a recoverable "wait and retry", distinct from
+     a red failure the user must go fix. */
+  --warning: #b45309;
+  --warning-bg: #fffbeb;
+
   --ring: #5b5bf0;
 
   /* Lumen brand gradient: blue -> violet -> magenta. Used sparingly
@@ -66,6 +71,9 @@
   --success: #4ade80;
   --success-bg: #0f2417;
 
+  --warning: #fbbf24;
+  --warning-bg: #2a2210;
+
   --ring: #8385ff;
 
   --grad-1: #5db8ff;
@@ -97,6 +105,8 @@
 
   --color-success: var(--success);
   --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
 
   --color-ring: var(--ring);
 
