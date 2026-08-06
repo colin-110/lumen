@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.document import DocumentStatus
 from app.models.user import User
 from app.schemas.document import DocumentCreate, DocumentRead, DocumentUpdate
+from app.services import semantic_cache
 from app.services.qdrant_client import delete_document_points
 from app.services.storage import storage
 from app.tasks.document_tasks import process_document
@@ -113,4 +114,6 @@ async def delete_document(
 
     await storage.delete_file(doc.storage_key)
     delete_document_points(str(doc.id))
+    org_id = str(doc.organization_id) if doc.organization_id else None
+    await semantic_cache.invalidate(org_id, str(doc.owner_id))
     await crud_document.remove(db, db_obj=doc)

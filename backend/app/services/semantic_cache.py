@@ -103,3 +103,25 @@ async def store(
         await asyncio.to_thread(_store_sync, query, answer, sources, organization_id, owner_id)
     except Exception:
         logger.warning("Semantic cache write failed", exc_info=True)
+
+
+def _invalidate_sync(organization_id: str | None, owner_id: str) -> None:
+    qdrant.delete(
+        collection_name=CACHE_COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(must=_tenant_filter(organization_id, owner_id)[1:])
+        ),
+    )
+
+
+async def invalidate(organization_id: str | None, owner_id: str) -> None:
+    """Bust every cached answer for this tenant. Call whenever the document set
+    changes (ingestion completes, a document is deleted) so a near-duplicate
+    question can't serve a stale answer/citations from before the change —
+    the cache has no other way to know the underlying document set moved."""
+    if not settings.SEMANTIC_CACHE_ENABLED:
+        return
+    try:
+        await asyncio.to_thread(_invalidate_sync, organization_id, owner_id)
+    except Exception:
+        logger.warning("Semantic cache invalidation failed", exc_info=True)
