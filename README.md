@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-35%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -16,21 +16,14 @@ one command.
 > Built as a from-scratch, end-to-end systems project: backend, retrieval pipeline, frontend,
 > observability, and infra, each verified running before moving to the next.
 
----
-
-## Screenshots
-
-> _Add your own screenshots here once the stack is running locally —
-> `docker compose up -d` and open `http://localhost:3000`._
->
-> Suggested shots: the empty-state chat screen, a streamed answer with citation chips expanded,
-> the document manager mid-upload, and the Grafana dashboard at `http://localhost:3001`.
-
-| | |
-|---|---|
-| `docs/screenshot-chat.png` | Streaming chat with citations |
-| `docs/screenshot-documents.png` | Document manager |
-| `docs/screenshot-grafana.png` | Live Grafana dashboard |
+<!-- TODO(screenshots): add a Screenshots section here once images exist. Run the stack
+     (`docker compose up -d`, http://localhost:3000) and capture:
+       docs/screenshot-chat.png      - a streamed answer with citation chips expanded
+       docs/screenshot-debugger.png  - /debug showing the rerank stage and the dropped chunks
+       docs/screenshot-compare.png   - a scoped multi-document answer calling out a conflict
+       docs/screenshot-grafana.png   - the provisioned dashboard at http://localhost:3001
+     Kept as a comment rather than an empty section: a "Screenshots" heading with no
+     screenshots under it reads worse than no heading at all. -->
 
 ---
 
@@ -113,12 +106,15 @@ flowchart LR
 **Request flow for a chat message:**
 1. Fold conversation history into a standalone search query (skipped on the first message).
 2. Check the semantic cache (Redis lookup → Qdrant similarity match) — on a hit, stream the cached
-   answer immediately.
+   answer immediately. Skipped entirely when the question is pinned to a document scope, since
+   cache entries carry no notion of scope.
 3. On a miss: hybrid search (dense + sparse, RRF-fused) against Qdrant, reranked by a cross-encoder,
-   scoped to the user's organization.
+   scoped to the user's organization — and, when documents are pinned, allocated fairly across them
+   so one long document can't fill the whole context.
 4. Stream the LLM's response token-by-token over SSE, with automatic provider fallback on
    error/timeout/rate-limit.
-5. Persist the exchange and store it in the semantic cache for next time.
+5. Persist the exchange and store it in the semantic cache for next time (again, scoped questions
+   excluded).
 
 This is deliberately **not** a ReAct/tool-calling agent loop — a single deterministic
 retrieve → generate pass is faster, cheaper, and far easier to stream and debug for a document
@@ -171,8 +167,9 @@ document, and ask it a question.
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO console | http://localhost:9006 |
 
-A `Makefile` wraps the common commands: `make up`, `make migrate`, `make seed`, `make test`,
-`make lint`.
+A `Makefile` wraps the common commands: `make up`, `make down`, `make logs`, `make migrate`,
+`make seed`, `make test`, `make lint`, plus `make eval-retrieval` and `make eval-generation`
+(see [Evaluation](#evaluation)).
 
 ### Configuration
 
@@ -207,17 +204,15 @@ No manual dashboard setup — it's there the moment `docker compose up -d` finis
 
 ## Performance & efficiency
 
-Numbers measured on this repo, not marketing copy — `docker stats` before/after an optimization
-pass focused specifically on memory:
+Numbers measured on this repo with `docker stats` / `docker images`, not marketing copy.
+
+**Pass 1 — memory footprint and service count:**
 
 | | Before | After | Change |
 |---|---|---|---|
 | Backend container RAM | 1.17 GB | 529 MB | **-55%** |
-| Worker container RAM | 537 MB | 481 MB | -10% |
-| Backend/worker image size | 1.99 GB | 1.54 GB | -23% |
 | Message broker | RabbitMQ (separate service) | Redis (reused) | **-1 whole service** |
 
-What actually moved the needle:
 - **`uvicorn --workers 2` → `1`.** Each in-process worker loads its own copy of the dense, sparse,
   and cross-encoder ONNX models — two workers meant two full copies for no throughput gain the
   async event loop wasn't already providing. Scale via container replicas instead
@@ -226,13 +221,46 @@ What actually moved the needle:
   reusing it as the Celery broker removes an entire service instead of adding one.
 - **Multi-stage Docker build.** `build-essential`/`libpq-dev` (needed only to compile a couple of
   C-extension dependencies) now live in a discarded builder stage instead of the shipped image.
-- **Per-service memory limits** in `docker-compose.yml` so usage stays predictable under load
-  instead of unbounded.
 
-Test suite: **29 tests**, backend (`pytest`), covering JWT/password-hashing correctness, text
-chunking behavior, retrieval-metric correctness, and regression coverage for config-parsing bugs
-(an empty/comma-separated env var previously crashed the app at startup — now covered so it can't
-silently regress).
+**Pass 2 — image size and unbounded containers:**
+
+| | Before | After |
+|---|---|---|
+| Backend image | 1.67 GB | **1.58 GB** |
+| Worker image | 1.67 GB (separate build) | **shared with backend** |
+| Grafana image | 1.58 GB (`grafana`) | **1.47 GB** (`grafana-oss`) |
+| db / redis / qdrant / minio | no memory limit | explicitly capped |
+
+- **Stripped `onnx`'s bundled test fixtures** (~70 MB of `onnx/backend/test`, never imported at
+  runtime) in the builder stage — deleting them in a later layer would not have shrunk the image,
+  since earlier layers keep the bytes regardless.
+- **Backend and worker now share one built image**, differing only by `command`, instead of
+  building two near-identical 1.67 GB images from the same Dockerfile.
+- **`grafana/grafana` → `grafana/grafana-oss`**, dropping bundled enterprise plugins this project
+  never loads.
+- **Memory limits on every service.** `db`, `redis`, `qdrant` and `minio` previously had none and
+  could consume all host RAM. The worker's cap was also raised after it was measured at ~697 MB
+  against a 700 MB limit — close enough to the ceiling that a large PDF would OOM-kill it mid-task.
+
+Usage after ingesting a handful of documents and running several chats — i.e. with the ONNX models
+loaded, not at idle:
+
+| Container | RAM / limit |
+|---|---|
+| worker | 697 MB / 900 MB |
+| backend | 503 MB / 900 MB |
+| grafana | 187 MB / 256 MB |
+| minio | 94 MB / 256 MB |
+| qdrant | 85 MB / 512 MB |
+| prometheus | 57 MB / 200 MB |
+| db | 52 MB / 512 MB |
+| frontend | 34 MB / 200 MB |
+| redis | 13 MB / 256 MB |
+
+Test suite: **44 tests** (`pytest`), covering JWT/password-hashing correctness, text chunking,
+retrieval-metric maths, LLM-judge output parsing, fair multi-document context allocation, and
+regression coverage for two real bugs — a config-parsing crash on an empty/comma-separated env var,
+and a global top-k selection that dropped a pinned document out of a comparison entirely.
 
 ---
 
@@ -387,33 +415,53 @@ build on the frontend on every push and pull request against `main`.
 
 ```
 ============================= test session starts ==============================
-platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python3.12
-collecting ... collected 22 items
-
-tests/test_chunking.py::test_empty_text_returns_no_chunks PASSED         [  4%]
-tests/test_chunking.py::test_short_text_returns_single_chunk PASSED      [  9%]
-tests/test_chunking.py::test_long_text_splits_into_multiple_chunks_within_size PASSED [ 13%]
-tests/test_chunking.py::test_consecutive_chunks_share_overlap_text PASSED [ 18%]
-tests/test_chunking.py::test_no_content_lost_across_chunks PASSED        [ 22%]
-tests/test_config.py::test_empty_fallback_models_env_var_does_not_crash PASSED [ 27%]
-tests/test_config.py::test_comma_separated_fallback_models PASSED        [ 31%]
-tests/test_config.py::test_json_array_fallback_models PASSED             [ 36%]
-tests/test_config.py::test_empty_cors_origins_env_var_does_not_crash PASSED [ 40%]
-tests/test_config.py::test_comma_separated_cors_origins PASSED           [ 45%]
-tests/test_config.py::test_default_settings_construct_without_any_env_vars PASSED [ 50%]
-tests/test_main.py::test_health_check PASSED                             [ 54%]
+platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python
+collecting ... collected 44 items
+tests/test_chunking.py::test_empty_text_returns_no_chunks PASSED         [  2%]
+tests/test_chunking.py::test_short_text_returns_single_chunk PASSED      [  4%]
+tests/test_chunking.py::test_long_text_splits_into_multiple_chunks_within_size PASSED [  6%]
+tests/test_chunking.py::test_consecutive_chunks_share_overlap_text PASSED [  9%]
+tests/test_chunking.py::test_no_content_lost_across_chunks PASSED        [ 11%]
+tests/test_config.py::test_empty_fallback_models_env_var_does_not_crash PASSED [ 13%]
+tests/test_config.py::test_comma_separated_fallback_models PASSED        [ 15%]
+tests/test_config.py::test_json_array_fallback_models PASSED             [ 18%]
+tests/test_config.py::test_empty_cors_origins_env_var_does_not_crash PASSED [ 20%]
+tests/test_config.py::test_comma_separated_cors_origins PASSED           [ 22%]
+tests/test_config.py::test_default_settings_construct_without_any_env_vars PASSED [ 25%]
+tests/test_evaluation_judge.py::test_extract_json_parses_plain_json PASSED [ 27%]
+tests/test_evaluation_judge.py::test_extract_json_strips_markdown_fences PASSED [ 29%]
+tests/test_evaluation_judge.py::test_extract_json_finds_object_amid_surrounding_prose PASSED [ 31%]
+tests/test_evaluation_judge.py::test_extract_json_raises_on_garbage PASSED [ 34%]
+tests/test_evaluation_judge.py::test_clamp01_clamps_out_of_range_values PASSED [ 36%]
+tests/test_evaluation_judge.py::test_clamp01_returns_zero_for_non_numeric PASSED [ 38%]
+tests/test_evaluation_metrics.py::test_recall_at_k_counts_hits_within_cutoff PASSED [ 40%]
+tests/test_evaluation_metrics.py::test_recall_at_k_with_no_relevant_docs_is_zero PASSED [ 43%]
+tests/test_evaluation_metrics.py::test_precision_at_k_divides_by_k_not_by_hits PASSED [ 45%]
+tests/test_evaluation_metrics.py::test_reciprocal_rank_uses_first_relevant_hit PASSED [ 47%]
+tests/test_evaluation_metrics.py::test_ndcg_at_k_is_one_for_perfectly_ranked_relevant_docs PASSED [ 50%]
+tests/test_evaluation_metrics.py::test_ndcg_at_k_penalizes_relevant_docs_ranked_lower PASSED [ 52%]
+tests/test_evaluation_metrics.py::test_ndcg_at_k_with_no_relevant_docs_is_zero PASSED [ 54%]
+tests/test_main.py::test_health_check PASSED                             [ 56%]
 tests/test_main.py::test_openapi_schema_loads PASSED                     [ 59%]
-tests/test_main.py::test_chat_requires_auth PASSED                       [ 63%]
-tests/test_main.py::test_upload_requires_auth PASSED                     [ 68%]
-tests/test_security.py::test_password_hash_roundtrip PASSED              [ 72%]
-tests/test_security.py::test_password_hash_is_salted PASSED              [ 77%]
-tests/test_security.py::test_verify_password_rejects_garbage_hash_without_raising PASSED [ 81%]
-tests/test_security.py::test_bcrypt_72_byte_truncation_is_handled_safely PASSED [ 86%]
-tests/test_security.py::test_access_and_refresh_tokens_roundtrip PASSED  [ 90%]
-tests/test_security.py::test_decode_token_rejects_tampered_signature PASSED [ 95%]
+tests/test_main.py::test_chat_requires_auth PASSED                       [ 61%]
+tests/test_main.py::test_upload_requires_auth PASSED                     [ 63%]
+tests/test_retrieval_allocation.py::test_long_document_cannot_monopolise_the_budget PASSED [ 65%]
+tests/test_retrieval_allocation.py::test_diverges_from_plain_top_k_on_the_measured_real_case PASSED [ 68%]
+tests/test_retrieval_allocation.py::test_every_document_contributes_before_any_contributes_twice PASSED [ 70%]
+tests/test_retrieval_allocation.py::test_most_relevant_document_still_leads_the_context PASSED [ 72%]
+tests/test_retrieval_allocation.py::test_within_a_document_original_order_is_preserved PASSED [ 75%]
+tests/test_retrieval_allocation.py::test_respects_the_limit PASSED       [ 77%]
+tests/test_retrieval_allocation.py::test_returns_everything_when_limit_exceeds_available_chunks PASSED [ 79%]
+tests/test_retrieval_allocation.py::test_uneven_document_sizes_drain_without_dropping_chunks PASSED [ 81%]
+tests/test_retrieval_allocation.py::test_empty_input_and_zero_limit_are_safe PASSED [ 84%]
+tests/test_security.py::test_password_hash_roundtrip PASSED              [ 86%]
+tests/test_security.py::test_password_hash_is_salted PASSED              [ 88%]
+tests/test_security.py::test_verify_password_rejects_garbage_hash_without_raising PASSED [ 90%]
+tests/test_security.py::test_bcrypt_72_byte_truncation_is_handled_safely PASSED [ 93%]
+tests/test_security.py::test_access_and_refresh_tokens_roundtrip PASSED  [ 95%]
+tests/test_security.py::test_decode_token_rejects_tampered_signature PASSED [ 97%]
 tests/test_security.py::test_decode_token_rejects_garbage PASSED         [100%]
-
-============================= 22 passed in 18.28s ==============================
+============================== 44 passed in 7.10s ==============================
 ```
 
 </details>
@@ -431,10 +479,15 @@ docker compose ps
 curl http://localhost:8000/health
 # -> {"status":"ok","version":"1.0.0","environment":"local"}
 
-# 3. Full test suite, inside the actual container
-docker compose exec backend sh -c "pip install --quiet pytest pytest-asyncio && pytest -v"
+# 3. Full test suite (runs on the host — the runtime image deliberately
+#    ships no tests/ directory, only what's needed to serve traffic)
+cd backend && poetry install && poetry run pytest -v
+# -> 44 passed
 
-# 4. Prometheus is scraping the backend
+# 4. Retrieval quality against the golden dataset — no LLM calls, costs nothing
+make eval-retrieval
+
+# 5. Prometheus is scraping the backend
 curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
 # -> "health":"up"
 ```
@@ -443,6 +496,11 @@ Then in a browser: `http://localhost:3000` → log in with the seeded admin → 
 watch its status go `Queued` → `Ready` → ask a question about it and confirm the answer cites the
 document you uploaded. `http://localhost:3001` (Grafana) should show live request metrics as you
 click around.
+
+To see the retrieval machinery rather than just its output, upload two documents that disagree
+about something, then: open `/debug` and trace a question to watch the reranker reorder candidates
+and the score floor drop them; and in the chat composer select both documents under the scope
+picker and ask whether they match — the answer should cite both and name the conflict.
 
 ---
 
@@ -479,23 +537,23 @@ without touching application code (`storage.py` already speaks the plain S3 API 
 ```
 backend/
   app/
-    api/v1/endpoints/   # auth, documents, conversations, chat, debug
-    core/               # config, security, logging, celery, rate limiting
-    crud/                # DB access layer
-    models/ schemas/     # SQLAlchemy models + Pydantic schemas
-    services/            # retrieval, embeddings, agent pipeline, LLM router, storage
-    tasks/                # Celery document ingestion
-    evaluation/           # golden-dataset retrieval + generation eval harnesses
-  alembic/               # migrations
-  tests/                  # pytest suite
+    api/v1/endpoints/  # auth, documents, conversations, chat, debug
+    core/              # config, security, logging, celery, rate limiting
+    crud/              # DB access layer
+    models/ schemas/   # SQLAlchemy models + Pydantic schemas
+    services/          # retrieval, embeddings, agent pipeline, LLM router, storage
+    tasks/             # Celery document ingestion
+    evaluation/        # golden dataset + retrieval and generation eval harnesses
+  alembic/             # migrations
+  tests/               # pytest suite
 frontend/
   src/
-    app/                  # Next.js App Router pages
-    components/           # chat, documents, debug, auth, layout
-    lib/                   # API client, auth context, types
+    app/               # Next.js App Router pages (chat, documents, debug, auth)
+    components/        # chat, documents, debug, auth, layout
+    lib/               # API client, auth context, types, shared hooks
 monitoring/
   prometheus.yml
-  grafana/                # provisioned datasource + dashboard
+  grafana/             # provisioned datasource + dashboard
 ```
 
 ---
