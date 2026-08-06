@@ -25,6 +25,7 @@ from typing import Any, Literal
 
 from app.core.config import settings
 from app.services import semantic_cache, web_search as web_search_service
+from app.services.llm_errors import classify as classify_llm_error
 from app.services.llm_router import MODEL_ALIAS, get_router
 from app.services.retrieval import RetrievedChunk, hybrid_search
 
@@ -222,6 +223,7 @@ async def run(
     # 4. Generate, streaming tokens as they arrive
     router = get_router()
     full_text_parts: list[str] = []
+    generation_failed = False
     try:
         stream = await router.acompletion(
             model=MODEL_ALIAS,
@@ -236,14 +238,23 @@ async def run(
                 full_text_parts.append(delta)
                 yield PipelineEvent("token", delta)
     except Exception as exc:
-        logger.error("LLM generation failed", exc_info=True)
-        error_message = (
-            "I couldn't reach the language model just now. "
-            "Please check that an LLM provider API key is configured and try again."
+        info = classify_llm_error(exc)
+        logger.error("LLM generation failed (%s)", info.kind.value, exc_info=True)
+        yield PipelineEvent("token", info.message)
+        # Structured so the UI can render quota/rate-limit distinctly from a
+        # generic failure, rather than burying the cause in prose.
+        yield PipelineEvent(
+            "error",
+            {
+                "kind": info.kind.value,
+                "message": info.message,
+                "retry_after_seconds": info.retry_after_seconds,
+                "retryable": info.is_retryable,
+                "detail": info.provider_detail,
+            },
         )
-        yield PipelineEvent("token", error_message)
-        yield PipelineEvent("error", str(exc))
-        full_text_parts = [error_message]
+        full_text_parts = [info.message]
+        generation_failed = True
 
     full_text = "".join(full_text_parts)
     latency_ms = int((time.perf_counter() - start) * 1000)
@@ -251,7 +262,7 @@ async def run(
     # Never store a scoped answer: it was produced from a caller-chosen subset
     # of documents, so a later unscoped question that matched it would inherit
     # a document scope it never asked for.
-    if full_text and chunks and not scoped:
+    if full_text and chunks and not scoped and not generation_failed:
         await semantic_cache.store(search_query, full_text, [s.__dict__ for s in sources], org_str, owner_str)
 
     yield PipelineEvent("done", {"cached": False, "latency_ms": latency_ms})

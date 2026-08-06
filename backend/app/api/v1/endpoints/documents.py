@@ -3,7 +3,15 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    File,
+    HTTPException,
+    UploadFile,
+    status,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api import deps
@@ -17,7 +25,7 @@ from app.schemas.document import DocumentCreate, DocumentRead, DocumentUpdate
 from app.services import semantic_cache
 from app.services.qdrant_client import delete_document_points
 from app.services.storage import storage
-from app.tasks.document_tasks import process_document
+from app.tasks.document_tasks import ingest_document_inline, process_document
 
 router = APIRouter()
 
@@ -26,6 +34,7 @@ ALLOWED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".csv"}
 
 @router.post("/upload", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
 async def upload_document(
+    background_tasks: BackgroundTasks,
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(deps.get_current_active_user),
@@ -76,7 +85,13 @@ async def upload_document(
         )
         raise HTTPException(status_code=502, detail="Failed to store document")
 
-    process_document.delay(str(doc.id))
+    if settings.INGEST_INLINE:
+        # Small-footprint mode: no Celery worker process to hand off to, so
+        # parse/chunk/embed/index runs here after the response is sent. See
+        # INGEST_INLINE in core/config.py for the durability trade-off.
+        background_tasks.add_task(ingest_document_inline, str(doc.id))
+    else:
+        process_document.delay(str(doc.id))
     return doc
 
 

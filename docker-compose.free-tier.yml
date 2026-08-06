@@ -1,0 +1,99 @@
+# Small-footprint profile for a ~1GB host (AWS free-tier t2/t3.micro, or any
+# 1GB VPS). Run with:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.free-tier.yml up -d
+#
+# The default stack measures ~1.73GB across nine containers and will not fit.
+# This profile removes the three services that aren't on the critical path for
+# "upload a document, ask a question":
+#
+#   worker      ~500MB  It loads a second copy of the dense+sparse ONNX models.
+#                       Removed; INGEST_INLINE=true runs ingestion inside the
+#                       API process, reusing the models already loaded there.
+#   grafana     ~173MB  dashboards
+#   prometheus   ~48MB  metrics scraping (/metrics is still exposed, so you can
+#                       scrape it from outside the box if you want it)
+#
+# What you give up, honestly:
+#   - Ingestion no longer retries and isn't durable across an API restart. A
+#     crash mid-parse leaves the document stuck in PROCESSING. Fine for a demo
+#     or a single user; not what you want under real upload volume.
+#   - Uploads and chat share one process, so embedding a large PDF adds latency
+#     to concurrent questions.
+#
+# MinIO is deliberately KEPT here (~93MB) so the profile runs as-is and can be
+# tested locally. On a real 1GB box, the next things to remove are the stateful
+# services, by pointing at managed free tiers instead of running them:
+#
+#   S3_ENDPOINT_URL= (unset)          -> real S3, 5GB free tier      saves ~93MB
+#   QDRANT_URL=https://...            -> Qdrant Cloud, 1GB free      saves ~134MB
+#   POSTGRES_SERVER=...               -> Neon / RDS free tier        saves ~22MB
+#
+# With all three offloaded this lands near ~800MB, which is the realistic way
+# to fit a 1GB instance. Keeping them local totals ~1.05GB — it will run, but
+# only with a swap file, and swapping the embedding models is slow.
+#
+# Note on depends_on: Compose *merges* depends_on across files rather than
+# replacing it, so a service can't be dropped here while another still waits on
+# it — the base file's condition survives and the dependent never starts.
+# That's why the removals below are exactly the services nothing depends on.
+
+services:
+  worker:
+    # Compose has no "remove this service" directive; zero replicas is the
+    # supported way to drop one without editing the base file.
+    deploy:
+      replicas: 0
+
+  prometheus:
+    deploy:
+      replicas: 0
+
+  grafana:
+    deploy:
+      replicas: 0
+
+  backend:
+    environment:
+      - INGEST_INLINE=true
+      # A second uvicorn worker would double the resident model copies.
+      - UVICORN_WORKERS=1
+      # Fewer candidates through the cross-encoder lowers peak RSS. Re-check
+      # with `make eval-retrieval` before and after if you tune this.
+      - RETRIEVE_CANDIDATES=20
+    deploy:
+      resources:
+        limits:
+          memory: 820m
+
+  db:
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  redis:
+    # Bound the cache so Redis can't grow into the memory the API needs.
+    command: ["redis-server", "--maxmemory", "96mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  qdrant:
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  minio:
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  frontend:
+    deploy:
+      resources:
+        limits:
+          memory: 128m

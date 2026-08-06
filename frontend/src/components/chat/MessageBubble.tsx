@@ -4,7 +4,8 @@ import { Sparkles, Zap } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { SourceChips } from "./SourceChips";
-import type { ChatSource, MessageRole } from "@/lib/types";
+import { LLMErrorNotice } from "./LLMErrorNotice";
+import type { ChatSource, LLMError, MessageRole } from "@/lib/types";
 
 export interface DisplayMessage {
   id: string;
@@ -13,6 +14,8 @@ export interface DisplayMessage {
   sources?: ChatSource[];
   cached?: boolean;
   latency_ms?: number | null;
+  /** Set when generation failed with a classified provider error. */
+  llmError?: LLMError | null;
 }
 
 export function MessageBubble({ message }: { message: DisplayMessage }) {
@@ -44,6 +47,8 @@ export function MessageBubble({ message }: { message: DisplayMessage }) {
         )}
 
         {message.sources && message.sources.length > 0 && <SourceChips sources={message.sources} />}
+
+        {message.llmError && <LLMErrorNotice error={message.llmError} />}
 
         {(message.cached || typeof message.latency_ms === "number") && message.content && (
           <div className="mt-2 flex items-center gap-1 text-[11px] text-muted-foreground">

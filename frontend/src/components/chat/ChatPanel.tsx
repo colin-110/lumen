@@ -10,7 +10,7 @@ import { useDocumentUploads } from "@/lib/use-document-uploads";
 import { EXAMPLE_PROMPTS } from "@/lib/suggestions";
 import { MessageBubble, type DisplayMessage } from "./MessageBubble";
 import { Composer } from "./Composer";
-import type { ChatSource } from "@/lib/types";
+import type { ChatSource, LLMError } from "@/lib/types";
 
 interface StreamingState {
   text: string;
@@ -109,6 +109,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
       let finalCached = false;
       let finalLatency = 0;
       let sawError = false;
+      let llmError: LLMError | null = null;
 
       try {
         await api.streamChat(
@@ -135,8 +136,11 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
               finalCached = info.cached;
               finalLatency = info.latency_ms;
             },
-            onError: () => {
+            onError: (err) => {
               sawError = true;
+              // Structured errors (quota, rate limit, auth) get their own
+              // notice under the message; bare strings stay generic.
+              if (err && typeof err === "object") llmError = err;
             },
           },
           controller.signal
@@ -154,6 +158,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
           id: nextTempId(),
           role: "assistant",
           content: finalText || (sawError ? "Sorry, I couldn't generate a response. Please try again." : ""),
+          llmError,
           sources: finalSources,
           cached: finalCached,
           latency_ms: finalLatency || null,

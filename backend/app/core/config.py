@@ -124,6 +124,18 @@ class Settings(BaseSettings):
     # spaces apart; it's cosmetic, Redis doesn't isolate DBs from each other.
     CELERY_BROKER_URL: str = "redis://localhost:6380/1"
 
+    # Run document ingestion inside the API process instead of dispatching to
+    # a Celery worker. The worker is a second process that loads its own copy
+    # of the dense + sparse ONNX models (~500MB measured), which is the single
+    # largest line item when trying to fit this stack on a 1GB host such as an
+    # AWS free-tier t3.micro — see docker-compose.free-tier.yml.
+    #
+    # The trade is real and you should not enable this under load: Celery gives
+    # bounded concurrency, retries with backoff (acks_late), and durability if
+    # the API restarts mid-ingest. Inline ingestion gives none of that; a crash
+    # during processing leaves the document stuck in PROCESSING.
+    INGEST_INLINE: bool = False
+
     @computed_field
     @property
     def CELERY_RESULT_BACKEND(self) -> str:

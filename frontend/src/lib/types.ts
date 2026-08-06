@@ -66,6 +66,25 @@ export interface StreamEvent {
   data: unknown;
 }
 
+export type LLMErrorKind =
+  | "quota"
+  | "rate_limit"
+  | "auth"
+  | "timeout"
+  | "unavailable"
+  | "context_length"
+  | "unknown";
+
+/** Structured failure from the generation step, so the UI can distinguish
+ * "your provider quota is spent" from a generic outage. */
+export interface LLMError {
+  kind: LLMErrorKind;
+  message: string;
+  retry_after_seconds: number | null;
+  retryable: boolean;
+  detail: string | null;
+}
+
 export interface DebugChunk {
   rank: number;
   chunk_id: string;

@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-44%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-58%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -287,7 +287,7 @@ loaded, not at idle:
 | frontend | 34 MB / 200 MB |
 | redis | 13 MB / 256 MB |
 
-Test suite: **44 tests** (`pytest`), covering JWT/password-hashing correctness, text chunking,
+Test suite: **58 tests** (`pytest`), covering JWT/password-hashing correctness, text chunking,
 retrieval-metric maths, LLM-judge output parsing, fair multi-document context allocation, and
 regression coverage for two real bugs — a config-parsing crash on an empty/comma-separated env var,
 and a global top-k selection that dropped a pinned document out of a comparison entirely.
@@ -386,6 +386,41 @@ Two design notes:
   keyed on question + tenant with no notion of document scope, so serving one would answer
   "compare A and B" from a different document set — the same failure class as serving a stale
   answer after an upload.
+
+---
+
+## Running on a 1GB host (AWS free tier)
+
+The default stack is production-shaped and measures **1,730 MiB** across nine containers — about
+double what a free-tier `t2/t3.micro` gives you. A small-footprint profile is included:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.free-tier.yml up -d
+```
+
+| | Default | Free-tier profile |
+|---|---:|---:|
+| backend | 741 MiB | 578 MiB |
+| worker | 502 MiB | **removed** |
+| qdrant | 88 | 136 |
+| minio | 93 | 75 |
+| grafana + prometheus | 221 | **removed** |
+| db + redis + frontend | 85 | 61 |
+| **total** | **1,730 MiB** | **850 MiB** |
+
+The single biggest saving is dropping the Celery worker, which loads its own second copy of the
+dense and sparse ONNX models. `INGEST_INLINE=true` runs parse → chunk → embed → index inside the
+API process instead, reusing the models already resident there. Verified end to end: uploading a
+document with no worker container running ingests and becomes searchable.
+
+**The trade-off is real.** Inline ingestion has no retries and no durability — if the API restarts
+mid-parse the document is stuck in `PROCESSING`, where Celery's `acks_late` would have requeued it.
+Uploads and chat also share one process, so embedding a large PDF adds latency to concurrent
+questions. This profile is for a demo or single user, not upload volume.
+
+850 MiB on a 1024 MiB instance leaves very little for the OS; add a swap file, or offload the
+stateful services to managed free tiers (real S3, Qdrant Cloud, Neon) to reach roughly 640 MiB.
+`docker-compose.free-tier.yml` documents the exact env vars for each.
 
 ---
 
