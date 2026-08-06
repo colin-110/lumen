@@ -13,7 +13,7 @@ from app.crud.crud_document import document as crud_document
 from app.db.session import AsyncSessionLocal
 from app.models.document import DocumentStatus
 from app.schemas.document import DocumentUpdate
-from app.services import retrieval
+from app.services import retrieval, semantic_cache
 from app.services.chunking import split_text
 from app.services.document_parser import UnsupportedDocumentError, extract_text
 from app.services.storage import storage
@@ -70,6 +70,8 @@ async def _process_document(document_id: str) -> None:
                 db_obj=doc,
                 obj_in=DocumentUpdate(status=DocumentStatus.COMPLETED, chunk_count=chunk_count),
             )
+            org_id = str(doc.organization_id) if doc.organization_id else None
+            await semantic_cache.invalidate(org_id, str(doc.owner_id))
             logger.info("Indexed %d chunks for document %s (%s)", chunk_count, document_id, doc.filename)
 
         except UnsupportedDocumentError as exc:
