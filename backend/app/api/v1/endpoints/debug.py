@@ -173,7 +173,7 @@ async def debug_retrieval(
 
     # --- 4. the exact prompt the model receives -----------------------------
     sources = _build_sources(selected_raw)
-    context = _format_context(sources)
+    context = _format_context(selected_raw)
     user_turn = f"CONTEXT:\n{context}\n\nQUESTION:\n{request.message}"
     # Resolved exactly the way chat resolves it, so a multi-document trace
     # shows the cross-document instructions the model will actually receive.

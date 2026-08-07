@@ -79,7 +79,7 @@ async def _run_case(question, org_str, owner_str) -> CaseResult:
     start = time.perf_counter()
     chunks = await hybrid_search(question.question, org_str, owner_str)
     sources = _build_sources(chunks)
-    context = _format_context(sources)
+    context = _format_context(chunks)
 
     answer = await _generate_answer(question.question, context)
     verdict = await judge_answer(question.question, question.expected_answer, context, answer)
