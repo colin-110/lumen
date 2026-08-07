@@ -33,6 +33,11 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: us-east-1
 
+      # SSM executes as root; the checkout and Docker state belong to
+      # ec2-user, and git refuses to operate on another user's repo. The first
+      # two git calls bootstrap the checkout to the commit being deployed, then
+      # scripts/deploy.sh (from that commit) does the rest as ec2-user.
+      #
       # Deploy over SSM rather than SSH. The instance needs no inbound port
       # open at all — the SSM agent polls outbound — so CD doesn't force
       # port 22 open to GitHub's dynamic runner IP ranges.
@@ -48,13 +53,9 @@ jobs:
             --parameters 'commands=[
               "set -euo pipefail",
               "cd /home/ec2-user/lumen",
-              "git fetch --quiet origin main",
-              "git reset --hard origin/main",
-              "CF=\"-f docker-compose.yml -f docker-compose.free-tier.yml -f docker-compose.ec2.yml -f docker-compose.caddy.yml\"",
-              "sudo -u ec2-user docker compose $CF build",
-              "sudo -u ec2-user docker compose $CF up -d",
-              "sudo -u ec2-user docker compose $CF exec -T backend alembic upgrade head",
-              "sudo -u ec2-user docker image prune -f"
+              "sudo -u ec2-user git fetch --quiet origin main",
+              "sudo -u ec2-user git reset --hard origin/main",
+              "sudo -u ec2-user bash scripts/deploy.sh"
             ]' \
             --query 'Command.CommandId' --output text)
           echo "command_id=$CMD_ID" >> "$GITHUB_OUTPUT"
