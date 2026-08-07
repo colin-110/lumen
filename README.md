@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-99%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -15,8 +15,8 @@ one command.
 
 > Built as a from-scratch, end-to-end systems project: backend, retrieval pipeline, frontend,
 > observability, and infra, each verified running before moving to the next.
----
 
+---
 
 ## Screenshots
 
@@ -48,8 +48,6 @@ both documents.
 > Regenerate against any running instance:
 > `cd frontend && node scripts/capture-screenshots.mjs <baseUrl> <email> <password>`
 > It uploads its own fixture documents and deletes them afterwards.
-
----
 
 ---
 
@@ -313,7 +311,7 @@ loaded, not at idle:
 | frontend | 34 MB / 200 MB |
 | redis | 13 MB / 256 MB |
 
-Test suite: **99 tests** — 73 backend (`pytest`) and 26 frontend (`vitest`), covering JWT/password-hashing correctness, text chunking,
+Test suite: **111 tests** — 85 backend (`pytest`) and 26 frontend (`vitest`), covering JWT/password-hashing correctness, text chunking,
 retrieval-metric maths, LLM-judge output parsing, fair multi-document context allocation, and
 regression coverage for two real bugs — a config-parsing crash on an empty/comma-separated env var,
 and a global top-k selection that dropped a pinned document out of a comparison entirely.
@@ -492,11 +490,86 @@ response includes the system prompt and raw chunk text.
 ## Testing & CI
 
 ```bash
-make test             # pytest + vitest — auth, chunking, config-parsing, eval-metric/judge tests
+make test             # pytest (85) + vitest (26)
 make lint             # ruff (backend) + eslint (frontend)
 make eval-retrieval   # retrieval quality harness — free, no LLM calls
 make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above
 ```
+
+**111 tests across five layers.** Each targets something that can break silently
+rather than padding a count with render smoke tests.
+
+| Layer | Count | What it protects |
+|---|---:|---|
+| Unit — security | 7 | JWT round-trip, tampered-signature rejection, bcrypt salting and the 72-byte truncation edge |
+| Unit — retrieval | 21 | Fair multi-document allocation, score-floor selection, structure-aware chunking |
+| Unit — evaluation | 20 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
+| Contract — API | 4 | Auth is actually enforced on chat and upload; OpenAPI schema loads |
+| Regression | 33 | Every bug in the table below, reproduced then locked down |
+| Frontend — Vitest | 26 | SSE frame parsing, citation numbering, typed error rendering |
+
+Notable cases, chosen because they're the ones that would otherwise regress unnoticed:
+
+- **SSE frames split across network reads** — a single frame arriving in two TCP
+  chunks breaks naive line-buffered parsers.
+- **Context truncation** — a fact is planted past the 600-character preview cut and
+  asserted to survive into the prompt.
+- **Fair allocation** — reproduces a measured trace where six contract chunks
+  out-ranked an invoice's only chunk, and asserts the invoice still reaches the model.
+- **Quota vs. auth** — asserts a spent quota is never rendered as "rejected the API key".
+
+**Pipeline.** Push to `main` → CI (lint, 85 pytest, 26 vitest, Next build) → on success,
+CD deploys to EC2 over AWS SSM and runs a health smoke test. Deployment uses SSM rather
+than SSH specifically so the instance needs **no inbound port opened** to GitHub's dynamic
+runner IPs. The deploy IAM user is scoped to `ssm:SendCommand` on one instance ARN.
+
+---
+
+## Problems found and fixed
+
+Each was found by measuring rather than reading, reproduced, then covered by a test.
+
+| Problem | Cause | Fix |
+|---|---|---|
+| **Model blind to 40% of every chunk** | The prompt was built from `SourceRef.snippet`, a 600-char *UI preview*, while chunks are 1000 chars. Retrieval surfaced the right passage; the answer said "the context doesn't say". | `_format_context` takes chunks and uses full text; snippet stays bounded for the UI |
+| **Stale answers after upload** | Semantic cache keyed on question embedding + tenant, with no invalidation when the document set changed. A new document returned the old document's answer. | Invalidate on ingest-complete and delete; scoped questions bypass the cache in both directions |
+| **One-sided comparisons** | Global top-k let a 7-chunk contract take all six slots; the pinned invoice never reached the model, so "do these match?" was unanswerable | Round-robin allocation across pinned documents |
+| **Only one document searched** | Cross-encoder scores non-answers near −10 against a −6.0 floor, collapsing broad queries to a single chunk | Floor only trims; never below `MIN_CONTEXT_CHUNKS` |
+| **Quota reported as a broken key** | Every provider failure rendered "check that an API key is configured" | Typed classification: quota / rate-limit / auth / timeout / unavailable / context-length |
+| **Chunks straddling sections** | Flat character splitting mixed the tail of one clause with the head of the next | Split at headings; every chunk carries its heading |
+| **Upload appeared to vanish** | Progress chip removed before the awaited list refetch returned | Await invalidation, then clear the chip |
+| **Frontend called `localhost` in prod** | `NEXT_PUBLIC_API_URL` is inlined at *build* time and was baked as localhost | Build arg set to the public origin; single-origin via Caddy |
+
+---
+
+## Scalability
+
+Honest limits of the current design, and what each would take to lift.
+
+**Where it scales today.** The API and frontend are stateless and replica-safe. The
+worker is horizontally scalable — Celery with `acks_late`, so a task survives a worker
+dying. All state is in Postgres, Qdrant, Redis or S3, none of it on the container.
+
+**The binding constraint is model memory.** Each API process and each worker loads its
+own copy of the dense, sparse and cross-encoder ONNX models (~500 MB). That's why
+`UVICORN_WORKERS` defaults to 1 and scaling is by replica, not by in-process worker.
+Beyond a handful of replicas the right move is to split embedding/reranking into its own
+service so the weights are resident once per node rather than once per process — measured
+at ~150 MB of weights, so it pays for itself quickly.
+
+| Ceiling | Hit at roughly | Lift it by |
+|---|---|---|
+| Single-node memory | ~2 replicas on 2 GB | Shared embedding service; managed Qdrant/Postgres |
+| Rate limits are per-user | Any open-registration deployment | Global spend cap keyed on org, not user |
+| Semantic cache is tenant-wide | Large orgs, diverse questions | Per-user namespacing; TTL tuned from hit-rate metrics |
+| Reranker latency ~200 ms | Sustained concurrency | GPU execution provider, or rerank fewer candidates |
+| Qdrant single node | Millions of chunks | Qdrant Cloud / sharded collection |
+| Inline ingestion (free-tier profile) | Any real upload volume | Use the default profile with a Celery worker |
+
+**Not yet addressed:** no horizontal-scaling infra-as-code, no load test to establish the
+actual p95 under concurrency, and no autoscaling policy. The numbers above are reasoned
+from measured per-process memory, not from a load test — that gap is deliberate to
+document rather than paper over.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint + test on the backend and lint + type-check +
 build on the frontend on every push and pull request against `main`.
