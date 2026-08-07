@@ -140,6 +140,49 @@ FOLLOW-UP:
 STANDALONE VERSION:"""
 
 
+# Words that make a follow-up depend on what came before. A question
+# containing none of these, and long enough to stand on its own, is almost
+# always already self-contained.
+_CONTEXT_DEPENDENT_TOKENS = frozenset(
+    {
+        # pronouns and possessives
+        "it", "its", "it's", "they", "them", "their", "he", "she", "his", "her", "him",
+        # demonstratives
+        "that", "this", "these", "those", "there", "such",
+        # comparatives that only mean something relative to a prior answer
+        "same", "another", "other", "else", "one", "ones",
+        "former", "latter", "above", "below",
+        "previous", "prior", "earlier", "aforementioned", "said",
+    }
+)
+_FOLLOWUP_OPENERS = ("what about", "how about", "and ", "but ", "also ", "why", "when", "where", "who")
+# Below this, a question is too terse to be standalone ("the timeline?").
+_STANDALONE_MIN_WORDS = 6
+
+
+def _needs_rewrite(query: str) -> bool:
+    """Cheap pre-filter so a self-contained question doesn't pay for an LLM call.
+
+    Rewriting costs one extra completion per message, which on a free-tier key
+    (Gemini allows 20/day) halves the number of questions a user can actually
+    ask. Most follow-ups in practice are already standalone — "what is the
+    monthly fee?" needs no history to make sense — so only spend the call when
+    the text actually looks like it refers backwards.
+
+    Deliberately biased towards rewriting: a false positive costs one call, a
+    false negative retrieves against a query missing its referent and returns
+    the wrong chunks.
+    """
+    normalized = query.lower().strip()
+    words = [w.strip(".,!?;:'\"") for w in normalized.split()]
+
+    if any(w in _CONTEXT_DEPENDENT_TOKENS for w in words):
+        return True
+    if normalized.startswith(_FOLLOWUP_OPENERS):
+        return True
+    return len(words) < _STANDALONE_MIN_WORDS
+
+
 async def _rewrite_query(query: str, history: list[ChatMessage]) -> str:
     """Fold conversation context into the retrieval query so follow-ups like
     "what about the timeline?" actually retrieve the right chunks — the raw
@@ -147,6 +190,9 @@ async def _rewrite_query(query: str, history: list[ChatMessage]) -> str:
     back to the raw query on any failure; this is a retrieval-quality
     optimization, never a hard dependency."""
     if not settings.QUERY_REWRITE_ENABLED or not history:
+        return query
+    if not _needs_rewrite(query):
+        logger.debug("Query looks standalone; skipping the rewrite call")
         return query
 
     recent = history[-settings.QUERY_REWRITE_HISTORY_TURNS :]
