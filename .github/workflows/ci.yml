@@ -31,7 +31,9 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # 22, not 20: jsdom + undici's CacheStorage throws on Node 20
+          # under Vitest. Next.js 16 requires >=20.9, so 22 is in range.
+          node-version: '22'
       - name: Install dependencies
         run: cd frontend && npm ci
       - name: Run Linting
