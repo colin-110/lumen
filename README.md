@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-121%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -13,6 +13,10 @@ hybrid (dense + sparse) vector retrieval, a Redis-backed semantic cache, multi-p
 fallback, and a streaming chat UI, all running as a fully containerized stack you can bring up with
 one command.
 
+**Live instance:** [3-218-31-157.nip.io](https://3-218-31-157.nip.io) — sign in as
+`admin@enterprise.ai`, upload a document, ask it something. Running on a single AWS
+free-tier instance behind Caddy with automatic TLS, deployed by CI on every push to `main`.
+
 > Built as a from-scratch, end-to-end systems project: backend, retrieval pipeline, frontend,
 > observability, and infra, each verified running before moving to the next.
 
@@ -20,9 +24,23 @@ one command.
 
 ## Screenshots
 
-**Retrieval debugger** — every pipeline stage for one question, with per-stage latency. Here RRF
-fusion ranks both documents identically at `0.833`, and the cross-encoder is what pulls them apart:
-note the ↑1 / ↓1 rank movement, and the score floor that decides what actually reaches the model.
+**A grounded, multi-document answer.** Two documents that deliberately disagree — a contract saying
+NET 30 and $80/TB, an invoice billing NET 15 and $95/TB. The answer names both conflicts and cites
+the exact passage behind each claim, including three separate passages from the same contract.
+Answering it at all depends on the fair-allocation fix below: under a global top-k the contract's
+chunks take every slot and the invoice never reaches the model.
+
+![Cited multi-document answer](docs/screenshot-chat.png)
+
+**Empty state.** The suggested questions are built from the documents actually in the corpus —
+including a comparison prompt once there are two — rather than a static list that returns nothing
+on first use.
+
+![Empty state](docs/screenshot-chat-empty.png)
+
+**Retrieval debugger** — every pipeline stage for one question, with per-stage latency. This is the
+rerank half: the cross-encoder lifts the best chunk two places and pushes another down two, then
+the score floor drops a chunk at `-11.322` before the prompt is built.
 
 ![Retrieval debugger](docs/screenshot-debugger-rerank.png)
 
@@ -46,8 +64,9 @@ both documents.
 </details>
 
 > Regenerate against any running instance:
-> `cd frontend && node scripts/capture-screenshots.mjs <baseUrl> <email> <password>`
-> It uploads its own fixture documents and deletes them afterwards.
+> `cd frontend && node scripts/capture-screenshots.mjs <baseUrl> <email> <password> [apiUrl]`
+> It uploads its own fixture documents, fails loudly if they don't finish ingesting, and deletes
+> them afterwards.
 
 ---
 
@@ -490,13 +509,13 @@ response includes the system prompt and raw chunk text.
 ## Testing & CI
 
 ```bash
-make test             # pytest (95) + vitest (26)
+make test             # pytest (100) + vitest (26)
 make lint             # ruff (backend) + eslint (frontend)
 make eval-retrieval   # retrieval quality harness — free, no LLM calls
 make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above
 ```
 
-**121 tests across six layers.** Each targets something that can break silently
+**126 tests across seven layers.** Each targets something that can break silently
 rather than padding a count with render smoke tests.
 
 | Layer | Count | What it protects |
@@ -506,6 +525,7 @@ rather than padding a count with render smoke tests.
 | Unit — evaluation | 20 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
 | Contract — API | 4 | Auth is actually enforced on chat and upload; OpenAPI schema loads |
 | Security — tenant isolation | 10 | The Qdrant filter always carries a tenant condition, and caller-supplied `document_ids` narrows it rather than replacing it |
+| Concurrency — worker | 5 | Ingestion tasks share one event loop per process, so the DB pool outlives task 1 |
 | Regression | 33 | Every bug in the table below, reproduced then locked down |
 | Frontend — Vitest | 26 | SSE frame parsing, citation numbering, typed error rendering |
 
@@ -522,12 +542,12 @@ Notable cases, chosen because they're the ones that would otherwise regress unno
   attacker-controlled. A test asserts it is ANDed onto the tenant condition rather than
   substituted for it, and that no retrieval entry point can be called without a tenant
   argument. Cross-tenant leakage would be silent: the answer would still look plausible.
-- **Tenant isolation** —  arrives in the request body, so it is
-  attacker-controlled. A test asserts it is ANDed onto the tenant condition rather than
-  substituted for it, and that no retrieval entry point can be called without a tenant
-  argument. Cross-tenant leakage would be silent — the answers would still look plausible.
+- **One event loop per worker process** — reduces the ingestion outage below to a Future
+  created during "task 1" and awaited during "task 2". Under `asyncio.run()` that raises;
+  under the fix it doesn't. A single-document smoke test passes either way, which is
+  precisely why the bug survived manual testing.
 
-**Pipeline.** Push to `main` → CI (lint, 95 pytest, 26 vitest, Next build) → on success,
+**Pipeline.** Push to `main` → CI (lint, 100 pytest, 26 vitest, Next build) → on success,
 CD deploys to EC2 over AWS SSM and runs a health smoke test. Deployment uses SSM rather
 than SSH specifically so the instance needs **no inbound port opened** to GitHub's dynamic
 runner IPs. The deploy IAM user is scoped to `ssm:SendCommand` on one instance ARN.
@@ -540,6 +560,7 @@ Each was found by measuring rather than reading, reproduced, then covered by a t
 
 | Problem | Cause | Fix |
 |---|---|---|
+| **Only the first upload per worker process ever indexed** | Celery ran each task under `asyncio.run()`, which closes its loop on exit. The async DB engine is a module-level singleton, so its pooled asyncpg connections stayed bound to that dead loop; task 2 checked one out, died with "got Future attached to a different loop", retried, died again. Documents sat in `QUEUED` forever. | One long-lived event loop per worker process (`run_async`), so every loop-bound resource sees the same loop for the process's lifetime |
 | **Model blind to 40% of every chunk** | The prompt was built from `SourceRef.snippet`, a 600-char *UI preview*, while chunks are 1000 chars. Retrieval surfaced the right passage; the answer said "the context doesn't say". | `_format_context` takes chunks and uses full text; snippet stays bounded for the UI |
 | **Stale answers after upload** | Semantic cache keyed on question embedding + tenant, with no invalidation when the document set changed. A new document returned the old document's answer. | Invalidate on ingest-complete and delete; scoped questions bypass the cache in both directions |
 | **One-sided comparisons** | Global top-k let a 7-chunk contract take all six slots; the pinned invoice never reached the model, so "do these match?" was unanswerable | Round-robin allocation across pinned documents |
@@ -641,54 +662,23 @@ build on the frontend on every push and pull request against `main`.
 <summary>Real <code>pytest</code> output (run against this repo)</summary>
 
 ```
-============================= test session starts ==============================
-platform linux -- Python 3.12.13, pytest-9.1.1, pluggy-1.6.0 -- /usr/local/bin/python
-collecting ... collected 44 items
-tests/test_chunking.py::test_empty_text_returns_no_chunks PASSED         [  2%]
-tests/test_chunking.py::test_short_text_returns_single_chunk PASSED      [  4%]
-tests/test_chunking.py::test_long_text_splits_into_multiple_chunks_within_size PASSED [  6%]
-tests/test_chunking.py::test_consecutive_chunks_share_overlap_text PASSED [  9%]
-tests/test_chunking.py::test_no_content_lost_across_chunks PASSED        [ 11%]
-tests/test_config.py::test_empty_fallback_models_env_var_does_not_crash PASSED [ 13%]
-tests/test_config.py::test_comma_separated_fallback_models PASSED        [ 15%]
-tests/test_config.py::test_json_array_fallback_models PASSED             [ 18%]
-tests/test_config.py::test_empty_cors_origins_env_var_does_not_crash PASSED [ 20%]
-tests/test_config.py::test_comma_separated_cors_origins PASSED           [ 22%]
-tests/test_config.py::test_default_settings_construct_without_any_env_vars PASSED [ 25%]
-tests/test_evaluation_judge.py::test_extract_json_parses_plain_json PASSED [ 27%]
-tests/test_evaluation_judge.py::test_extract_json_strips_markdown_fences PASSED [ 29%]
-tests/test_evaluation_judge.py::test_extract_json_finds_object_amid_surrounding_prose PASSED [ 31%]
-tests/test_evaluation_judge.py::test_extract_json_raises_on_garbage PASSED [ 34%]
-tests/test_evaluation_judge.py::test_clamp01_clamps_out_of_range_values PASSED [ 36%]
-tests/test_evaluation_judge.py::test_clamp01_returns_zero_for_non_numeric PASSED [ 38%]
-tests/test_evaluation_metrics.py::test_recall_at_k_counts_hits_within_cutoff PASSED [ 40%]
-tests/test_evaluation_metrics.py::test_recall_at_k_with_no_relevant_docs_is_zero PASSED [ 43%]
-tests/test_evaluation_metrics.py::test_precision_at_k_divides_by_k_not_by_hits PASSED [ 45%]
-tests/test_evaluation_metrics.py::test_reciprocal_rank_uses_first_relevant_hit PASSED [ 47%]
-tests/test_evaluation_metrics.py::test_ndcg_at_k_is_one_for_perfectly_ranked_relevant_docs PASSED [ 50%]
-tests/test_evaluation_metrics.py::test_ndcg_at_k_penalizes_relevant_docs_ranked_lower PASSED [ 52%]
-tests/test_evaluation_metrics.py::test_ndcg_at_k_with_no_relevant_docs_is_zero PASSED [ 54%]
-tests/test_main.py::test_health_check PASSED                             [ 56%]
-tests/test_main.py::test_openapi_schema_loads PASSED                     [ 59%]
-tests/test_main.py::test_chat_requires_auth PASSED                       [ 61%]
-tests/test_main.py::test_upload_requires_auth PASSED                     [ 63%]
-tests/test_retrieval_allocation.py::test_long_document_cannot_monopolise_the_budget PASSED [ 65%]
-tests/test_retrieval_allocation.py::test_diverges_from_plain_top_k_on_the_measured_real_case PASSED [ 68%]
-tests/test_retrieval_allocation.py::test_every_document_contributes_before_any_contributes_twice PASSED [ 70%]
-tests/test_retrieval_allocation.py::test_most_relevant_document_still_leads_the_context PASSED [ 72%]
-tests/test_retrieval_allocation.py::test_within_a_document_original_order_is_preserved PASSED [ 75%]
-tests/test_retrieval_allocation.py::test_respects_the_limit PASSED       [ 77%]
-tests/test_retrieval_allocation.py::test_returns_everything_when_limit_exceeds_available_chunks PASSED [ 79%]
-tests/test_retrieval_allocation.py::test_uneven_document_sizes_drain_without_dropping_chunks PASSED [ 81%]
-tests/test_retrieval_allocation.py::test_empty_input_and_zero_limit_are_safe PASSED [ 84%]
-tests/test_security.py::test_password_hash_roundtrip PASSED              [ 86%]
-tests/test_security.py::test_password_hash_is_salted PASSED              [ 88%]
-tests/test_security.py::test_verify_password_rejects_garbage_hash_without_raising PASSED [ 90%]
-tests/test_security.py::test_bcrypt_72_byte_truncation_is_handled_safely PASSED [ 93%]
-tests/test_security.py::test_access_and_refresh_tokens_roundtrip PASSED  [ 95%]
-tests/test_security.py::test_decode_token_rejects_tampered_signature PASSED [ 97%]
-tests/test_security.py::test_decode_token_rejects_garbage PASSED         [100%]
-============================== 44 passed in 7.10s ==============================
+$ cd backend && poetry run pytest -q
+
+tests/test_agent_context.py ......                                 [  6%]
+tests/test_celery_event_loop.py .....                              [ 11%]
+tests/test_chunking.py .....                                       [ 16%]
+tests/test_chunking_structure.py ..........                        [ 26%]
+tests/test_config.py ......                                        [ 32%]
+tests/test_evaluation_judge.py ......                              [ 38%]
+tests/test_evaluation_metrics.py .......                           [ 45%]
+tests/test_llm_errors.py ..............                            [ 59%]
+tests/test_main.py ....                                            [ 63%]
+tests/test_query_rewrite_gate.py .........                         [ 72%]
+tests/test_retrieval_allocation.py ...........                     [ 83%]
+tests/test_security.py .......                                     [ 90%]
+tests/test_tenant_isolation.py ..........                          [100%]
+
+100 passed in 6.69s
 ```
 
 </details>
@@ -708,8 +698,8 @@ curl http://localhost:8000/health
 
 # 3. Full test suite (runs on the host — the runtime image deliberately
 #    ships no tests/ directory, only what's needed to serve traffic)
-cd backend && poetry install && poetry run pytest -v
-# -> 44 passed
+cd backend && poetry install && poetry run pytest -q
+# -> 100 passed
 
 # 4. Retrieval quality against the golden dataset — no LLM calls, costs nothing
 make eval-retrieval

@@ -1,7 +1,7 @@
 /**
  * Captures the README screenshots against a running Lumen instance.
  *
- *   cd frontend && node scripts/capture-screenshots.mjs [baseUrl] [email] [password]
+ *   cd frontend && node scripts/capture-screenshots.mjs [baseUrl] [email] [password] [apiUrl]
  *
  * Defaults to the local stack. Point it at a deployment to shoot that instead:
  *   cd frontend && node scripts/capture-screenshots.mjs https://your-host admin@enterprise.ai 'pw'
@@ -19,7 +19,13 @@ import { fileURLToPath } from "node:url";
 const BASE = (process.argv[2] || "http://localhost:3000").replace(/\/$/, "");
 const EMAIL = process.argv[3] || "admin@enterprise.ai";
 const PASSWORD = process.argv[4] || "admin12345";
-const API = `${BASE}/api/v1`;
+// A deployment puts the API behind the same origin as the app (Caddy reverse
+// proxies /api), but the local dev stack runs the backend on its own port.
+// Overridable, because neither guess holds for every environment.
+const API = (
+  process.argv[5] ||
+  (new URL(BASE).port === "3000" ? "http://localhost:8000/api/v1" : `${BASE}/api/v1`)
+).replace(/\/$/, "");
 // Relative to this file, not the cwd — playwright lives in frontend/node_modules,
 // so the script is run from there while the output belongs at the repo root.
 const OUT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "docs");
@@ -77,8 +83,14 @@ async function main() {
   const { access_token, refresh_token } = await loginRes.json();
 
   // --- fixture documents ---------------------------------------------------
+  // Named the way a real corpus is named, not "contract.txt": the empty state
+  // builds its suggested questions out of the filenames it finds, so terse
+  // fixture names would make the hero shot read as a toy.
   const uploaded = [];
-  for (const [filename, body] of [["contract.txt", CONTRACT], ["invoice.txt", INVOICE]]) {
+  for (const [filename, body] of [
+    ["master_services_agreement.txt", CONTRACT],
+    ["invoice_INV-8842.txt", INVOICE],
+  ]) {
     const form = new FormData();
     form.append("file", new Blob([body], { type: "text/plain" }), filename);
     const res = await api(access_token, "/documents/upload", { method: "POST", body: form });
@@ -86,11 +98,24 @@ async function main() {
     uploaded.push(await res.json());
   }
   console.log("  uploaded 2 fixture documents, waiting for ingestion...");
-  for (let i = 0; i < 60; i++) {
+  // Failing loudly matters: this loop used to fall through silently on
+  // timeout, and the run happily shot an empty state reading "No documents
+  // yet" and a chat answering "no documents were provided" — screenshots that
+  // looked like a broken product rather than a stalled worker.
+  let ingested = false;
+  let lastStatus = "unknown";
+  for (let i = 0; i < 60 && !ingested; i++) {
     const docs = await (await api(access_token, "/documents/")).json();
     const mine = docs.filter((d) => uploaded.some((u) => u.id === d.id));
-    if (mine.length === 2 && mine.every((d) => d.status === "completed")) break;
-    await new Promise((r) => setTimeout(r, 2000));
+    lastStatus = mine.map((d) => `${d.filename}=${d.status}`).join(", ") || "not listed";
+    ingested = mine.length === 2 && mine.every((d) => d.status === "completed");
+    if (!ingested) await new Promise((r) => setTimeout(r, 2000));
+  }
+  if (!ingested) {
+    throw new Error(
+      `documents never finished ingesting after 120s (${lastStatus}). ` +
+        `Is the Celery worker running? \`docker compose up -d worker\``
+    );
   }
 
   const browser = await chromium.launch();
@@ -120,10 +145,15 @@ async function main() {
   await settle();
   await shot(page, "documents");
 
-  // --- 2. chat with a cited, multi-document answer --------------------------
+  // --- 2. the empty state ---------------------------------------------------
+  // Shot before anything is asked, because that's the first thing a visitor
+  // sees, and because the suggested questions are generated from the two
+  // fixture documents above — proof they aren't a hardcoded list.
   await page.goto(BASE, { waitUntil: "domcontentloaded" });
   await settle();
+  await shot(page, "chat-empty");
 
+  // --- 3. chat with a cited, multi-document answer --------------------------
   const composer = page.getByPlaceholder(/Ask anything/i);
   await composer.fill("Does the invoice match the contract on payment terms and the overage rate?");
   await page.getByRole("button", { name: /send message/i }).click();
@@ -146,7 +176,7 @@ async function main() {
     console.log("        get docs/screenshot-chat.png.");
   }
 
-  // --- 3. retrieval debugger ------------------------------------------------
+  // --- 4. retrieval debugger ------------------------------------------------
   await page.goto(`${BASE}/debug`, { waitUntil: "domcontentloaded" });
   await settle();
   await page.getByPlaceholder(/Ask something/i).fill("What are the payment terms and the overage rate?");
