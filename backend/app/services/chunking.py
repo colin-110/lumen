@@ -1,8 +1,22 @@
-"""Recursive character text splitter.
+"""Structure-aware text splitter.
 
-A small reimplementation of the common "recursive character splitter"
-pattern (split on paragraph, then line, then sentence, then word, then
-character, backing off until pieces fit).
+Documents are divided at headings first, then each section is chunked with the
+usual recursive character split (paragraph, line, sentence, word, character)
+inside its own budget. Two things this buys over splitting the whole document
+flat:
+
+  * A chunk never spans two sections, so it can't mix the tail of "Fees and
+    Charges" with the head of "Payment Terms" — a chunk that then answered
+    neither question well.
+
+  * Every chunk carries its heading. A chunk from the middle of a long section
+    otherwise reaches the embedder and the model as orphaned prose: "...billed
+    at $80 per TB", with nothing indicating it concerns egress overage. The
+    heading travels with it, which helps the dense embedding match and lets the
+    model attribute the fact correctly.
+
+Text with no detectable structure (plain prose, OCR output) falls back to the
+original flat behaviour rather than inventing headings.
 
 Written out rather than imported because this is the only thing the project
 would have needed `langchain` for. Nothing else here uses it: conversation
@@ -12,7 +26,56 @@ directly. See the note in pyproject.toml.
 
 from __future__ import annotations
 
+import re
+
 _DEFAULT_SEPARATORS = ["\n\n", "\n", ". ", "? ", "! ", " ", ""]
+
+# Heading shapes that actually occur in the documents this ingests: markdown
+# ATX headings, numbered/lettered contract clauses, and short ALL-CAPS lines
+# used as headers in exported PDFs and DOCX.
+_HEADING_PATTERNS = (
+    re.compile(r"^\s{0,3}#{1,6}\s+\S"),                     # "## Payment Terms"
+    re.compile(r"^\s{0,3}\d+(\.\d+)*[.)]\s+\S"),            # "3. Payment Terms", "3.1) ..."
+    re.compile(r"^\s{0,3}(?:article|section|clause|appendix|schedule)\s+[\dIVXivx]+", re.IGNORECASE),
+    re.compile(r"^\s{0,3}[A-Z][A-Z0-9 &/,'()-]{3,60}$"),    # "PAYMENT TERMS"
+)
+# A heading is a short standalone line. Anything longer is prose that merely
+# happens to start with a number ("1990 was the year the company ...").
+_MAX_HEADING_CHARS = 90
+
+
+def _is_heading(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or len(stripped) > _MAX_HEADING_CHARS:
+        return False
+    is_markdown = bool(re.match(r"^\s{0,3}#{1,6}\s", stripped))
+    if not is_markdown and stripped.endswith((".", ",", ";", ":")):
+        # Sentences end in punctuation, headings generally don't; a trailing
+        # colon is a label ("Note:"), which is prose for our purposes.
+        return False
+    return any(p.match(stripped) for p in _HEADING_PATTERNS)
+
+
+def _split_into_sections(text: str) -> list[tuple[str, str]]:
+    """Split into (heading, body) pairs.
+
+    Text appearing before the first heading is kept with an empty heading
+    rather than dropped.
+    """
+    sections: list[tuple[str, str]] = []
+    heading = ""
+    body: list[str] = []
+    for line in text.splitlines():
+        if _is_heading(line):
+            if body or heading:
+                sections.append((heading, "\n".join(body).strip()))
+            heading = line.strip().lstrip("#").strip()
+            body = []
+        else:
+            body.append(line)
+    if body or heading:
+        sections.append((heading, "\n".join(body).strip()))
+    return [(h, b) for h, b in sections if b or h]
 
 
 def split_text(
@@ -21,12 +84,47 @@ def split_text(
     chunk_overlap: int = 150,
     separators: list[str] | None = None,
 ) -> list[str]:
+    """Split `text` into chunks of at most roughly `chunk_size` characters.
+
+    Structure is applied first: the text is divided at headings, then each
+    section is chunked independently, so a chunk never spans two sections.
+    Each chunk is prefixed with its heading.
+
+    That prefix is the point. A chunk taken from the middle of a long section
+    otherwise reaches the embedder and the model as orphaned prose — "...billed
+    at $80 per TB" with nothing saying it concerns egress overage. Carrying the
+    heading improves both the dense embedding and the model's ability to
+    attribute the fact.
+    """
     text = text.strip()
     if not text:
         return []
     seps = separators or _DEFAULT_SEPARATORS
-    raw_chunks = _split_recursive(text, seps, chunk_size)
-    return _merge_with_overlap(raw_chunks, chunk_size, chunk_overlap)
+
+    sections = _split_into_sections(text)
+    # Nothing detectable (plain prose, OCR output): behave exactly as the flat
+    # splitter did rather than inventing structure that isn't there.
+    if len(sections) <= 1 and not (sections and sections[0][0]):
+        return _merge_with_overlap(_split_recursive(text, seps, chunk_size), chunk_size, chunk_overlap)
+
+    chunks: list[str] = []
+    for heading, body in sections:
+        prefix = f"{heading}\n" if heading else ""
+        # Reserve room for the prefix so a chunk plus its heading still lands
+        # near chunk_size instead of overshooting it.
+        budget = max(200, chunk_size - len(prefix))
+        pieces = (
+            _merge_with_overlap(_split_recursive(body, seps, budget), budget, chunk_overlap)
+            if body
+            else []
+        )
+        if not pieces:
+            # A heading with no body still carries retrievable meaning.
+            if heading:
+                chunks.append(heading)
+            continue
+        chunks.extend(f"{prefix}{piece}" for piece in pieces)
+    return chunks
 
 
 def _split_recursive(text: str, separators: list[str], chunk_size: int) -> list[str]:
