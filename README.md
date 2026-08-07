@@ -15,15 +15,41 @@ one command.
 
 > Built as a from-scratch, end-to-end systems project: backend, retrieval pipeline, frontend,
 > observability, and infra, each verified running before moving to the next.
+---
 
-<!-- TODO(screenshots): add a Screenshots section here once images exist. Run the stack
-     (`docker compose up -d`, http://localhost:3000) and capture:
-       docs/screenshot-chat.png      - a streamed answer with citation chips expanded
-       docs/screenshot-debugger.png  - /debug showing the rerank stage and the dropped chunks
-       docs/screenshot-compare.png   - a scoped multi-document answer calling out a conflict
-       docs/screenshot-grafana.png   - the provisioned dashboard at http://localhost:3001
-     Kept as a comment rather than an empty section: a "Screenshots" heading with no
-     screenshots under it reads worse than no heading at all. -->
+
+## Screenshots
+
+**Retrieval debugger** — every pipeline stage for one question, with per-stage latency. Here RRF
+fusion ranks both documents identically at `0.833`, and the cross-encoder is what pulls them apart:
+note the ↑1 / ↓1 rank movement, and the score floor that decides what actually reaches the model.
+
+![Retrieval debugger](docs/screenshot-debugger-rerank.png)
+
+<details>
+<summary>More</summary>
+
+**Pipeline from the top** — query rewrite, semantic-cache probe, dense and sparse search.
+
+![Debugger stages](docs/screenshot-debugger.png)
+
+**Document manager** — upload, live ingestion status, chunk counts.
+
+![Documents](docs/screenshot-documents.png)
+
+**Typed provider errors** — a spent quota is reported as a quota problem, not as a broken API key,
+and says plainly that retrieval still worked. Note the citations behind it: retrieval *did* return
+both documents.
+
+![Quota error](docs/screenshot-quota-error.png)
+
+</details>
+
+> Regenerate against any running instance:
+> `cd frontend && node scripts/capture-screenshots.mjs <baseUrl> <email> <password>`
+> It uploads its own fixture documents and deletes them afterwards.
+
+---
 
 ---
 
