@@ -180,12 +180,19 @@ body {
 
 /* Soft ambient glow used behind hero/empty-state content */
 .brand-glow {
-  position: absolute;
+  /* Fixed, not absolute. `inset: 0` on an absolutely-positioned element only
+     fills the nearest positioned ancestor — here the centred, max-width empty
+     state — so the gradients stopped dead at that box and drew a visible
+     rectangle across the page. Anchoring to the viewport lets the light fall
+     off naturally past the content column. */
+  position: fixed;
   inset: 0;
+  z-index: 0;
   pointer-events: none;
   background:
-    radial-gradient(60% 50% at 22% 15%, color-mix(in srgb, var(--grad-1) 14%, transparent), transparent 70%),
-    radial-gradient(50% 45% at 80% 10%, color-mix(in srgb, var(--grad-3) 12%, transparent), transparent 70%);
+    radial-gradient(70% 55% at 18% 0%, color-mix(in srgb, var(--grad-1) 18%, transparent), transparent 72%),
+    radial-gradient(60% 50% at 85% 5%, color-mix(in srgb, var(--grad-3) 15%, transparent), transparent 72%),
+    radial-gradient(90% 60% at 50% 120%, color-mix(in srgb, var(--grad-2) 10%, transparent), transparent 70%);
 }
 
 /* ------------------------------------------------------------ scrollbar */
