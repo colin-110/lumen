@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-64%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -287,7 +287,7 @@ loaded, not at idle:
 | frontend | 34 MB / 200 MB |
 | redis | 13 MB / 256 MB |
 
-Test suite: **64 tests** (`pytest`), covering JWT/password-hashing correctness, text chunking,
+Test suite: **73 tests** (`pytest`), covering JWT/password-hashing correctness, text chunking,
 retrieval-metric maths, LLM-judge output parsing, fair multi-document context allocation, and
 regression coverage for two real bugs — a config-parsing crash on an empty/comma-separated env var,
 and a global top-k selection that dropped a pinned document out of a comparison entirely.

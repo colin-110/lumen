@@ -2,9 +2,12 @@
 
 A small reimplementation of the common "recursive character splitter"
 pattern (split on paragraph, then line, then sentence, then word, then
-character, backing off until pieces fit) so we don't need to pull in the
-full `langchain` package (a large dependency) just for this one utility —
-`langchain-core` + `langgraph` alone cover everything else we use.
+character, backing off until pieces fit).
+
+Written out rather than imported because this is the only thing the project
+would have needed `langchain` for. Nothing else here uses it: conversation
+state is persisted in Postgres via our own models, and litellm is called
+directly. See the note in pyproject.toml.
 """
 
 from __future__ import annotations
