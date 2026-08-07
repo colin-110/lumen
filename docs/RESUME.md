@@ -22,10 +22,11 @@ can't reproduce when asked.
 Pick three or four. They are ordered by how well they survive follow-up questions.
 
 **Retrieval quality, measured rather than asserted**
-> Built a golden-dataset evaluation harness (Recall@k, MRR, NDCG@k) that runs the production
-> retrieval code paths, and used it to compare four strategies; hybrid dense+sparse retrieval
-> with cross-encoder reranking reached **100% Recall@5 vs 94% for BM25 alone**, at a measured
-> 266ms vs 18ms — making the accuracy/latency trade-off explicit instead of assumed.
+> Built a golden-dataset evaluation harness (Recall@k, MRR, NDCG@k, 17 documents / 22 questions)
+> that runs the production retrieval code paths, and used it to compare four strategies; hybrid
+> dense+sparse retrieval
+> with cross-encoder reranking reached **100% Recall@5 vs 95% for BM25 alone**, at roughly 30× the
+> latency — making the accuracy/latency trade-off explicit and configurable instead of assumed.
 
 **The bug that load testing found**
 > Load testing surfaced that the semantic cache had **never worked**: an upstream client library
@@ -74,7 +75,7 @@ Pick three or four. They are ordered by how well they survive follow-up question
 |---|---|---|
 | Tests | 126 (100 pytest, 26 vitest) | `make test` |
 | Recall@5, hybrid + rerank | 100% | `make eval-retrieval` |
-| Recall@5, BM25 only | 94% | `make eval-retrieval` |
+| Recall@5, BM25 only | 95% | `make eval-retrieval` |
 | Semantic cache hit | 44 ms (vs 15,411 ms miss) | `python backend/scripts/load_test.py` |
 | Throughput, `/health` @ c5 | 401 req/s | `python backend/scripts/load_test.py` (run outside the container) |
 | Failure point | OOM kill at c50 (exit 137) | `python backend/scripts/load_test.py` |
@@ -107,7 +108,9 @@ framework abstraction, and the abstraction wasn't buying much: the pipeline is ~
 **"How do you know retrieval works?"**
 There's a golden dataset with ground-truth chunk labels and a harness that scores four retrieval
 strategies against it through the production code paths. It runs without an LLM, so it costs
-nothing and can run in CI. That's also how the reranker earned its 266 ms.
+nothing and can run in CI. It's also what justifies the reranker: it's the only strategy that
+reaches 100% Recall@5, and it costs about 30× the latency of fusion alone — a trade-off worth
+stating out loud rather than burying.
 
 **"What's the scaling bottleneck?"**
 Cross-encoder reranking. It's CPU-bound and in-process, so at concurrency 5 requests queue behind
