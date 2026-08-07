@@ -2,15 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Sparkles } from "lucide-react";
 import * as api from "@/lib/api-client";
 import { useToast } from "@/lib/toast-context";
 import { useDocumentUploads } from "@/lib/use-document-uploads";
-import { EXAMPLE_PROMPTS } from "@/lib/suggestions";
+import { suggestionsForDocuments } from "@/lib/suggestions";
 import { MessageBubble, type DisplayMessage } from "./MessageBubble";
 import { Composer } from "./Composer";
-import type { ChatSource, LLMError } from "@/lib/types";
+import type { ChatSource, DocumentItem, LLMError } from "@/lib/types";
 
 interface StreamingState {
   text: string;
@@ -25,6 +25,12 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
   const queryClient = useQueryClient();
   const { push } = useToast();
   const { uploads, handleFiles } = useDocumentUploads();
+  // Same query key the scope picker and documents page use, so this is served
+  // from cache rather than costing another request.
+  const { data: documents = [] } = useQuery({
+    queryKey: ["documents"],
+    queryFn: api.listDocuments,
+  });
 
   // Deliberately NOT seeded with initialConversationId: the guard effect
   // below compares this ref against the prop to decide whether history
@@ -193,7 +199,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
               ))}
             </div>
           ) : showEmptyState ? (
-            <EmptyState onPick={handleSend} />
+            <EmptyState onPick={handleSend} documents={documents} />
           ) : (
             <div className="space-y-5">
               {messages.map((m) => (
@@ -228,33 +234,68 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
   );
 }
 
-function EmptyState({ onPick }: { onPick: (text: string) => void }) {
+function EmptyState({
+  onPick,
+  documents,
+}: {
+  onPick: (text: string) => void;
+  documents: DocumentItem[];
+}) {
+  // Built from the user's real files. A static list asking about a refund
+  // policy or a "Project Zeta" returns nothing on every corpus, which makes
+  // the app look broken the first time anyone tries a suggestion.
+  const prompts = suggestionsForDocuments(documents);
+  const ready = documents.filter((d) => d.status === "completed");
+
   return (
-    <div className="relative flex flex-col items-center justify-center gap-7 py-16 text-center overflow-hidden">
+    <>
+      {/* Sits outside the centred column so the light isn't clipped to it. */}
       <div className="brand-glow" />
-      <div className="relative brand-mark w-14 h-14 rounded-2xl flex items-center justify-center text-white shadow-lg animate-scale-in">
-        <Sparkles size={24} strokeWidth={2.25} />
-      </div>
-      <div className="relative">
-        <h2 className="text-2xl font-semibold tracking-tight brand-text">How can I help you today?</h2>
-        <p className="mt-2 text-sm text-muted-foreground max-w-sm mx-auto">
-          Ask a question and I&apos;ll search your organization&apos;s documents for grounded, cited answers.
-        </p>
-      </div>
-      <div className="relative grid grid-cols-1 sm:grid-cols-2 gap-2.5 w-full max-w-lg">
-        {EXAMPLE_PROMPTS.map(({ icon: Icon, text }) => (
-          <button
-            key={text}
-            onClick={() => onPick(text)}
-            className="group flex items-start gap-3 text-left text-sm rounded-2xl border border-border bg-surface px-4 py-3.5 hover:border-primary/40 hover:shadow-md hover:-translate-y-0.5 transition-all text-foreground/90"
-          >
-            <span className="mt-0.5 w-7 h-7 rounded-lg bg-accent text-accent-foreground flex items-center justify-center shrink-0 group-hover:scale-105 transition-transform">
-              <Icon size={14} />
+
+      <div className="relative z-10 flex min-h-[62vh] flex-col items-center justify-center gap-8 py-10 text-center">
+        <div className="brand-mark flex h-16 w-16 items-center justify-center rounded-[22px] text-white shadow-xl shadow-primary/20 animate-scale-in">
+          <Sparkles size={28} strokeWidth={2.1} />
+        </div>
+
+        <div className="max-w-xl">
+          <h2 className="text-3xl font-semibold tracking-tight brand-text sm:text-4xl">
+            What do your documents say?
+          </h2>
+          <p className="mx-auto mt-3 max-w-md text-[15px] leading-relaxed text-muted-foreground">
+            Every answer is retrieved from your own files and cited back to the exact passage — so
+            you can check it, not just trust it.
+          </p>
+
+          {/* Grounds the promise in the actual corpus rather than leaving it abstract. */}
+          <p className="mt-4 inline-flex items-center gap-2 rounded-full border border-border bg-surface/70 px-3 py-1 text-xs text-muted-foreground backdrop-blur">
+            <span className="relative flex h-1.5 w-1.5">
+              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-success opacity-60" />
+              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-success" />
             </span>
-            {text}
-          </button>
-        ))}
+            {ready.length > 0
+              ? `${ready.length} document${ready.length === 1 ? "" : "s"} indexed and searchable`
+              : "No documents yet — attach one to begin"}
+          </p>
+        </div>
+
+        <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
+          {prompts.map(({ icon: Icon, text }) => (
+            <button
+              key={text}
+              onClick={() => onPick(text)}
+              className="group relative flex items-start gap-3 overflow-hidden rounded-2xl border border-border bg-surface/80 px-4 py-4 text-left text-sm text-foreground/90 backdrop-blur transition-all hover:-translate-y-0.5 hover:border-primary/40 hover:bg-surface hover:shadow-lg hover:shadow-primary/5"
+            >
+              {/* Gradient wash on hover, so the cards feel part of the brand
+                  rather than plain bordered boxes. */}
+              <span className="pointer-events-none absolute inset-0 opacity-0 transition-opacity duration-300 group-hover:opacity-100 bg-[var(--gradient-brand-soft)]" />
+              <span className="relative mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-accent text-accent-foreground transition-transform group-hover:scale-110">
+                <Icon size={15} />
+              </span>
+              <span className="relative leading-snug">{text}</span>
+            </button>
+          ))}
+        </div>
       </div>
-    </div>
+    </>
   );
 }
