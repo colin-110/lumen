@@ -81,13 +81,22 @@ class ChatMessage:
     content: str
 
 
-RETRIEVAL_CONFIDENCE_FLOOR = 0.0  # rerank scores below this trigger the web-search fallback
+def _format_context(chunks: list[RetrievedChunk]) -> str:
+    """Build the CONTEXT block from the *full* chunk text.
 
+    This deliberately takes chunks rather than SourceRefs. SourceRef.snippet is
+    truncated to 600 characters for the UI's hover preview, and building the
+    prompt from it meant the model only ever saw the first ~60% of every
+    retrieved chunk (CHUNK_SIZE is 1000). Retrieval would surface exactly the
+    right passage and the model would still answer "the context doesn't say",
+    because the relevant sentence had been cut off before it ever arrived.
 
-def _format_context(sources: list[SourceRef]) -> str:
-    if not sources:
+    Indices match `_build_sources`, which numbers the same list from 1, so the
+    [n] citations the model emits line up with the chips the UI renders.
+    """
+    if not chunks:
         return "No relevant internal documents were found for this question."
-    blocks = [f"[{s.index}] (source: {s.filename})\n{s.snippet}" for s in sources]
+    blocks = [f"[{i}] (source: {c.filename})\n{c.text}" for i, c in enumerate(chunks, start=1)]
     return "\n\n".join(blocks)
 
 
@@ -210,7 +219,7 @@ async def run(
     sources = _build_sources(chunks)
     yield PipelineEvent("sources", [s.__dict__ for s in sources])
 
-    context = _format_context(sources)
+    context = _format_context(chunks)
     if web_results:
         web_block = "\n\n".join(f"- {r['title']}: {r['content'][:400]} ({r['url']})" for r in web_results)
         context += f"\n\nWeb search results (no internal documents matched):\n{web_block}"
