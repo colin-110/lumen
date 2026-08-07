@@ -518,6 +518,10 @@ Notable cases, chosen because they're the ones that would otherwise regress unno
 - **Fair allocation** — reproduces a measured trace where six contract chunks
   out-ranked an invoice's only chunk, and asserts the invoice still reaches the model.
 - **Quota vs. auth** — asserts a spent quota is never rendered as "rejected the API key".
+- **Tenant isolation** — `document_ids` arrives in the request body and is therefore
+  attacker-controlled. A test asserts it is ANDed onto the tenant condition rather than
+  substituted for it, and that no retrieval entry point can be called without a tenant
+  argument. Cross-tenant leakage would be silent: the answer would still look plausible.
 - **Tenant isolation** —  arrives in the request body, so it is
   attacker-controlled. A test asserts it is ANDed onto the tenant condition rather than
   substituted for it, and that no retrieval entry point can be called without a tenant
