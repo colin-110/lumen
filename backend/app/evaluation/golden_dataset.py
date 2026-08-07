@@ -135,6 +135,87 @@ DOCUMENTS: list[GoldenDocument] = [
         "on-call engineer is assigned each rotation in case the primary is "
         "unreachable.",
     ),
+    # --- multi-section documents -------------------------------------------
+    # Every fixture above is a single chunk, which means chunking has no effect
+    # on them and the harness cannot detect a chunking regression or
+    # improvement. These two are long enough to split across several chunks and
+    # are organised under headings, so structure-aware chunking is exercised:
+    # the fact being asked about sits in the middle of a section, far from the
+    # document's opening, and can only be retrieved well if the chunk carries
+    # its heading.
+    GoldenDocument(
+        "msa_contract",
+        "master_services_agreement.txt",
+        "Master Services Agreement between Northwind Ltd and Acme Corp\n"
+        "\n"
+        "1. Scope of Services\n"
+        "Northwind shall provide managed hosting for all production workloads, "
+        "including provisioning, monitoring, patching and incident response. "
+        "Services are delivered from the eu-west region unless otherwise agreed "
+        "in writing. Capacity planning reviews occur quarterly and are "
+        "accompanied by a written report to the customer's technical account "
+        "manager. Change requests affecting scope must be documented and "
+        "approved by both parties before any work commences.\n"
+        "\n"
+        "2. Fees and Charges\n"
+        "The agreed monthly fee is $4,500 USD, billed in arrears. That fee "
+        "covers up to 10TB of aggregate egress traffic per calendar month, "
+        "measured at the edge. Any overage beyond 10TB is billed at $80 per "
+        "terabyte, prorated to the nearest whole terabyte. Fees are exclusive "
+        "of sales tax, VAT or withholding, which are added to each invoice as "
+        "required by law.\n"
+        "\n"
+        "3. Payment Terms\n"
+        "Payment terms are NET 30 from the invoice date. Invoices not disputed "
+        "in writing within 10 business days of receipt are deemed accepted in "
+        "full. Late payments accrue interest at 1.5% per month or the maximum "
+        "permitted by law, whichever is lower. Disputed line items do not "
+        "excuse payment of undisputed amounts on the same invoice.\n"
+        "\n"
+        "4. Service Levels\n"
+        "Northwind commits to 99.9% monthly uptime measured at the load "
+        "balancer, excluding maintenance windows notified five business days in "
+        "advance. Credits of 10% of monthly fees apply for each full percentage "
+        "point below target, capped at 50% of the monthly fee for any single "
+        "month. Credits are the sole remedy for a missed service level and must "
+        "be claimed within 30 days of the affected month.\n"
+        "\n"
+        "5. Termination\n"
+        "Either party may terminate for material breach not remedied within 30 "
+        "days of written notice. On termination the customer shall pay all fees "
+        "accrued to the effective date. Migration assistance beyond the standard "
+        "30 day handover is billed at $200 per hour under a separate statement "
+        "of work.",
+    ),
+    GoldenDocument(
+        "security_handbook",
+        "security_handbook.txt",
+        "Information Security Handbook\n"
+        "\n"
+        "1. Access Control\n"
+        "All production access requires multi-factor authentication. Access is "
+        "granted on a least-privilege basis and reviewed every quarter by the "
+        "system owner. Shared accounts are prohibited. Access for departing "
+        "staff is revoked within one hour of their final working day.\n"
+        "\n"
+        "2. Encryption Standards\n"
+        "Data at rest is encrypted with AES-256. Data in transit uses TLS 1.3 "
+        "or higher; TLS 1.2 is permitted only for legacy integrations with a "
+        "documented exception. Encryption keys are rotated every 12 months and "
+        "stored in a managed key service, never in source control.\n"
+        "\n"
+        "3. Incident Response\n"
+        "Suspected incidents must be reported to the security team within one "
+        "hour of discovery. The on-call security engineer triages within 30 "
+        "minutes. Confirmed personal-data breaches are notified to the "
+        "controller within 24 hours, and a written post-incident review is "
+        "published within five working days.\n"
+        "\n"
+        "4. Vulnerability Management\n"
+        "Critical vulnerabilities are patched within 7 days of disclosure, high "
+        "within 30 days, and medium within 90 days. Dependency scanning runs on "
+        "every pull request and blocks merge on a critical finding.",
+    ),
 ]
 
 QUESTIONS: list[GoldenQuestion] = [
@@ -241,5 +322,42 @@ QUESTIONS: list[GoldenQuestion] = [
         ["incident_4471", "security_patch"],
         "keyword",
         "Incident INC-4471 and CVE-2024-9981.",
+    ),
+    # --- chunking-sensitive -------------------------------------------------
+    # Each of these targets a fact sitting in the middle of a long document,
+    # several sections in. A flat splitter can strand that fact in a chunk with
+    # no indication of which clause it belongs to; structure-aware chunking
+    # keeps the heading attached. These are the questions that move when
+    # chunking changes — the single-chunk fixtures above cannot.
+    GoldenQuestion(
+        "What interest rate applies to late payments?",
+        ["msa_contract"],
+        "paraphrase",
+        "1.5% per month, or the maximum permitted by law if that is lower.",
+    ),
+    GoldenQuestion(
+        "How are service level credits calculated and capped?",
+        ["msa_contract"],
+        "paraphrase",
+        "10% of monthly fees for each full percentage point below the 99.9% target, capped at 50% "
+        "of the monthly fee in any single month, and claimable within 30 days.",
+    ),
+    GoldenQuestion(
+        "How quickly must critical vulnerabilities be patched?",
+        ["security_handbook"],
+        "paraphrase",
+        "Within 7 days of disclosure; high within 30 days and medium within 90 days.",
+    ),
+    GoldenQuestion(
+        "How often are encryption keys rotated?",
+        ["security_handbook"],
+        "paraphrase",
+        "Every 12 months, stored in a managed key service and never in source control.",
+    ),
+    GoldenQuestion(
+        "What is the egress overage rate and what does the base fee include?",
+        ["msa_contract"],
+        "paraphrase",
+        "$80 per terabyte beyond the 10TB per month included in the $4,500 base fee.",
     ),
 ]
