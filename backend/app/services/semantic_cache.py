@@ -47,14 +47,21 @@ def _tenant_filter(organization_id: str | None, owner_id: str) -> list[models.Fi
 
 def _lookup_sync(query: str, organization_id: str | None, owner_id: str) -> CacheHit | None:
     vec = embeddings.embed_dense_one(query)
-    hits = qdrant.search(
+    # `query_points`, not the removed `search`. qdrant-client dropped `search`
+    # in favour of the unified query API; the call raised AttributeError on
+    # every lookup, `lookup()` caught it and logged a warning, and the cache
+    # silently reported a miss forever. Nothing failed loudly, so the feature
+    # looked present while every question paid full retrieval + generation.
+    # Found by a load test, not by reading the code.
+    result = qdrant.query_points(
         collection_name=CACHE_COLLECTION_NAME,
-        query_vector=vec,
+        query=vec,
         query_filter=models.Filter(must=_tenant_filter(organization_id, owner_id)),
         limit=1,
         score_threshold=settings.SEMANTIC_CACHE_THRESHOLD,
         with_payload=True,
     )
+    hits = result.points
     if not hits:
         return None
     payload = hits[0].payload or {}
