@@ -30,9 +30,15 @@ export function useDocumentUploads() {
           .uploadDocument(file, (pct) => {
             setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, progress: pct } : u)));
           })
-          .then(() => {
+          .then(async () => {
+            // Refetch the document list *before* dropping the progress chip.
+            // Removing it first left a gap of a second or more where the upload
+            // had vanished from the UI but the new document hadn't arrived in
+            // the refetched list yet, so the file appeared to disappear and then
+            // come back. Awaiting the invalidation hands off directly from the
+            // chip to the real row.
+            await queryClient.invalidateQueries({ queryKey: ["documents"] });
             setUploads((prev) => prev.filter((u) => u.key !== key));
-            queryClient.invalidateQueries({ queryKey: ["documents"] });
             push(`${file.name} uploaded — processing started`, "success");
           })
           .catch((err) => {
