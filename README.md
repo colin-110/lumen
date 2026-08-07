@@ -542,6 +542,60 @@ Each was found by measuring rather than reading, reproduced, then covered by a t
 
 ---
 
+## Load test
+
+`python backend/scripts/load_test.py [baseUrl] [email] [password]` — no external
+dependencies beyond `httpx`, and the retrieval stage consumes no LLM quota.
+
+Numbers below are from the free-tier profile (single uvicorn worker, 900 MB container
+cap, 2 vCPU), with the load generator running **outside** the container under test.
+
+**Framework throughput** — `GET /health`, no DB, no auth:
+
+| Concurrency | Throughput | p50 | p95 | Errors |
+|---:|---:|---:|---:|---:|
+| 5 | 401 req/s | 8 ms | 20 ms | 0 |
+| 10 | 340 req/s | 25 ms | 41 ms | 0 |
+| 20 | 260 req/s | 61 ms | 165 ms | 0 |
+| 50 | — | — | — | **container OOM-killed** |
+
+**Retrieval** — full hybrid search: dense + sparse query embedding, RRF fusion,
+cross-encoder rerank over 40 candidates. All CPU-bound in-process, no LLM call:
+
+| Concurrency | p50 | p95 |
+|---:|---:|---:|
+| 1 | 1,237 ms | 1,417 ms |
+| 5 | 5,054 ms | 22,218 ms |
+
+**Semantic cache** — the same question asked twice:
+
+| | Latency |
+|---|---:|
+| Cache miss (retrieve + generate) | 15,411 ms |
+| Cache hit | **44 ms** |
+
+### What the load test found
+
+**The semantic cache had never worked.** `qdrant-client` removed `.search()` in favour
+of `query_points`, so every lookup raised `AttributeError`, was caught by the surrounding
+`try/except`, logged a warning, and returned a clean miss. The application behaved
+correctly and no test failed — an advertised feature had silently never functioned, and
+every repeated question paid a full retrieval and a full LLM generation. Fixing it is the
+350× figure above. Reading the code would not have found this; the error handling was
+*correct*, it just hid a permanent failure.
+
+**The backend is OOM-killed at concurrency 50** (`OOMKilled=true`, exit 137). The cause is
+structural, not a leak: the process holds ~500 MB of ONNX weights, leaving little headroom
+inside a 900 MB cap once per-connection buffers are added. Raising the limit would move the
+number without addressing it — see the ceilings table below.
+
+**Retrieval does not scale within one process.** Going from 1 to 5 concurrent queries moves
+p95 from 1.4 s to 22 s. Reranking 40 candidates through a cross-encoder is CPU-bound, so
+concurrent requests contend for the same two cores rather than overlapping. This is the
+single strongest argument for the shared embedding service described below.
+
+---
+
 ## Scalability
 
 Honest limits of the current design, and what each would take to lift.
@@ -566,10 +620,10 @@ at ~150 MB of weights, so it pays for itself quickly.
 | Qdrant single node | Millions of chunks | Qdrant Cloud / sharded collection |
 | Inline ingestion (free-tier profile) | Any real upload volume | Use the default profile with a Celery worker |
 
-**Not yet addressed:** no horizontal-scaling infra-as-code, no load test to establish the
-actual p95 under concurrency, and no autoscaling policy. The numbers above are reasoned
-from measured per-process memory, not from a load test — that gap is deliberate to
-document rather than paper over.
+**Not yet addressed:** no horizontal-scaling infra-as-code and no autoscaling policy. The
+ceilings above are now backed by the load test rather than reasoned from per-process
+memory alone — see the measured OOM at concurrency 50 and the retrieval contention at
+concurrency 5.
 
 GitHub Actions (`.github/workflows/ci.yml`) runs lint + test on the backend and lint + type-check +
 build on the frontend on every push and pull request against `main`.

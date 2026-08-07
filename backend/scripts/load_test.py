@@ -80,7 +80,7 @@ async def main() -> None:
 
         # 2. Authenticated, DB-backed read under load.
         await run_concurrent(
-            client, "GET /api/v1/documents/ (200 requests, concurrency 40)", 200, 40, "GET", "/documents/"
+            client, "GET /api/v1/documents/ (200 requests, concurrency 20)", 200, 20, "GET", "/documents/"
         )
 
         # 3. Retrieval under concurrency. This is the interesting one for a RAG
