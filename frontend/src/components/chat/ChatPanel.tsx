@@ -285,7 +285,14 @@ function EmptyState({
           </p>
         </div>
 
-        <div className="grid w-full max-w-2xl grid-cols-1 gap-3 sm:grid-cols-2">
+        {/* Two columns only when there's something to put in both. With an
+            empty corpus there's a single "upload something" prompt, and in a
+            2-column grid it sat orphaned in the left half. */}
+        <div
+          className={`grid w-full grid-cols-1 gap-3 ${
+            prompts.length > 1 ? "max-w-2xl sm:grid-cols-2" : "max-w-md"
+          }`}
+        >
           {prompts.map(({ icon: Icon, text }) => (
             <button
               key={text}

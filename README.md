@@ -340,26 +340,34 @@ and a global top-k selection that dropped a pinned document out of a comparison 
 ## Evaluation
 
 Two harnesses, both driven by one hand-authored golden dataset
-(`backend/app/evaluation/golden_dataset.py`): 15 fixture documents and 17 questions with known
-correct source documents and known correct answers.
+(`backend/app/evaluation/golden_dataset.py`): 17 fixture documents and 22 questions with known
+correct source documents and known correct answers. Two of the documents are deliberately long
+enough to span several chunks, so structure-aware chunking has something to be measured against.
 
 ### Retrieval
 
 `make eval-retrieval` runs a golden-dataset harness (`backend/app/evaluation/`) that measures
 retrieval quality directly — no LLM calls, no API cost, safe to re-run after any change to
-chunking, embeddings, or the fusion/rerank pipeline. It ingests 15 fixture documents into an
-isolated namespace, runs 17 known-answer questions through four retrieval strategies using the
+chunking, embeddings, or the fusion/rerank pipeline. It ingests 17 fixture documents into an
+isolated namespace, runs 22 known-answer questions through four retrieval strategies using the
 exact same code paths as production (`app/services/retrieval.py`), and scores each against
 Recall@k, MRR, and NDCG@k:
 
 | Strategy | Recall@5 | Recall@10 | MRR | NDCG@10 | Avg latency |
 |---|---:|---:|---:|---:|---:|
-| Dense only | 98% | 100% | 1.00 | 0.99 | 43ms |
-| BM25 (sparse) only | 94% | 94% | 0.91 | 0.92 | 18ms |
-| Hybrid (RRF) | 98% | 100% | 1.00 | 0.99 | 42ms |
-| Hybrid + reranker | 100% | 100% | 1.00 | 1.00 | 266ms |
+| Dense only | 98% | 100% | 0.95 | 0.96 | 63ms |
+| BM25 (sparse) only | 95% | 95% | 0.92 | 0.93 | 15ms |
+| Hybrid (RRF) | 98% | 100% | 0.95 | 0.97 | 63ms |
+| Hybrid + reranker | **100%** | 100% | 0.95 | 0.97 | 2,005ms |
 
-This fixture corpus is deliberately small and topically distinct (so ground truth stays
+**Reading this honestly.** Reranking buys the last 2 points of Recall@5 — the difference between
+"the right passage is usually in the top 5" and "it always is" — and costs ~30× the latency of
+fusion alone on this corpus. That is the trade-off the table exists to make explicit; whether it's
+worth paying depends on the deployment, which is why `RERANK_TOP_K` and the strategy are config,
+not hard-coded. Note also that BM25 alone never recovers: its Recall@10 equals its Recall@5, so
+the passages it misses aren't ranked low, they aren't retrieved at all.
+
+The fixture corpus is deliberately small and topically distinct (so ground truth stays
 unambiguous to hand-verify), which is why every strategy scores well — the gap between strategies
 widens on noisier, larger, more ambiguous real-world corpora. Extend it by adding entries to
 `DOCUMENTS`/`QUESTIONS` in `app/evaluation/golden_dataset.py`; nothing else needs to change.
@@ -777,10 +785,12 @@ monitoring/
 
 ## Known limitations
 
-- **Chunking is structure-blind** — fixed 1000-char windows, no awareness of headings/tables.
+- **Chunking detects headings, not tables** — documents with recognisable headings split on them
+  and every chunk carries its heading, but a document with no heading structure still falls back to
+  fixed 1000-char windows, and tables are split like any other text.
 - **No relevance grading step** — retrieved chunks reach the model based on the reranker score
   alone; nothing double-checks relevance with a second LLM pass.
-- **Eval set is small** — 15 documents / 17 questions, hand-authored and topically distinct. Enough
+- **Eval set is small** — 17 documents / 22 questions, hand-authored and topically distinct. Enough
   to catch a regression, not enough to be a benchmark; a free-tier LLM key also caps the generation
   harness to ~8 questions per day.
 - **Single-judge generation eval** — faithfulness/hallucination scores come from one LLM judge with
@@ -796,7 +806,10 @@ monitoring/
 ## Roadmap
 
 - LLM-based relevance grading before generation
-- Structure-aware chunking (headings/paragraphs, not raw character counts)
+- Table-aware chunking (headings are handled; tables still split like prose)
+- A shared embedding/rerank service, so API replicas stop each loading their own ~500 MB of ONNX
+  weights — the fix for both the OOM at concurrency 50 and the retrieval p95 blow-up at 5
+- A global spend cap; per-user rate limits don't bound total cost with open registration
 - HyDE (hypothetical document embeddings) for retrieval
 - Larger eval set + human-calibrated judge agreement, and eval wired into CI as a regression gate
 - GPU execution provider for embedding/reranking at higher throughput
