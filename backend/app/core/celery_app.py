@@ -30,6 +30,34 @@ celery_app.conf.update(
 )
 
 
+_loop: asyncio.AbstractEventLoop | None = None
+
+
+def run_async(coro):
+    """Run `coro` on this worker process's single, long-lived event loop.
+
+    `asyncio.run()` creates a fresh loop and closes it when the coroutine
+    finishes. That is fatal here: SQLAlchemy's async engine is a module-level
+    singleton, so the asyncpg connections it pools are bound to whichever loop
+    first opened them. Task 1 would fill the pool on loop A and close loop A;
+    task 2 would check the same connection out on loop B and die with
+    "got Future ... attached to a different loop", retry, and die again —
+    leaving the document stuck in QUEUED forever. Only the first task in each
+    worker process ever succeeded, which is invisible in a one-document dev
+    test and total ingestion failure in real use.
+
+    Keeping one loop per process means every loop-bound resource (the asyncpg
+    pool above all) sees the same loop for the process's lifetime. Celery's
+    prefork pool gives each child its own module state, so each child gets its
+    own loop, and tasks within a child are executed one at a time.
+    """
+    global _loop
+    if _loop is None or _loop.is_closed():
+        _loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_loop)
+    return _loop.run_until_complete(coro)
+
+
 @after_setup_logger.connect
 @after_setup_task_logger.connect
 def _configure_celery_logging(**kwargs) -> None:
@@ -53,7 +81,7 @@ def _warm_up_worker(**kwargs) -> None:
         init_qdrant()
         embeddings.get_dense_model()
         embeddings.get_sparse_model()
-        if not asyncio.run(storage.ensure_bucket()):
+        if not run_async(storage.ensure_bucket()):
             logger.error("Object storage bucket unavailable; ingestion will fail until it recovers")
         logger.info("Celery worker warm-up complete")
     except Exception:

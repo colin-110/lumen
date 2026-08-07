@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import logging
 import os
 import tempfile
 import uuid
 
 import app.db.base  # noqa: F401 - registers every model so relationship() string refs resolve
-from app.core.celery_app import celery_app
+from app.core.celery_app import celery_app, run_async
 from app.core.config import settings
 from app.crud.crud_document import document as crud_document
 from app.db.session import AsyncSessionLocal
@@ -112,7 +111,9 @@ def process_document(self, document_id: str):
     are caught inside `_process_document` and recorded on the row instead of
     retried."""
     try:
-        asyncio.run(_process_document(document_id))
+        # run_async, not asyncio.run: the DB connection pool is shared across
+        # tasks and cannot survive its loop being closed. See run_async.
+        run_async(_process_document(document_id))
     except Exception as exc:
         logger.warning("Retrying document %s after error: %s", document_id, exc)
         raise self.retry(exc=exc)

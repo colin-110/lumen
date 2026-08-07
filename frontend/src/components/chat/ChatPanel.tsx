@@ -191,7 +191,12 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
   return (
     <div className="h-full flex flex-col">
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
-        <div className="mx-auto max-w-3xl px-4 py-6 md:px-6">
+        {/* The empty state centres itself in the whole pane, so its column has
+            to inherit the full height rather than being sized by its content —
+            otherwise the hero sits high with a dead band underneath it. */}
+        <div
+          className={`mx-auto max-w-3xl px-4 py-6 md:px-6 ${showEmptyState ? "h-full" : ""}`}
+        >
           {historyLoading ? (
             <div className="space-y-4">
               {[0, 1].map((i) => (
@@ -252,7 +257,9 @@ function EmptyState({
       {/* Sits outside the centred column so the light isn't clipped to it. */}
       <div className="brand-glow" />
 
-      <div className="relative z-10 flex min-h-[62vh] flex-col items-center justify-center gap-8 py-10 text-center">
+      {/* min-h keeps it usable on a short window, where h-full alone would
+          squash the cards into the hero. */}
+      <div className="relative z-10 flex h-full min-h-[34rem] flex-col items-center justify-center gap-8 py-10 text-center">
         <div className="brand-mark flex h-16 w-16 items-center justify-center rounded-[22px] text-white shadow-xl shadow-primary/20 animate-scale-in">
           <Sparkles size={28} strokeWidth={2.1} />
         </div>
