@@ -182,11 +182,32 @@ def _search_sync(
         # about would silently make the comparison unanswerable.
         return allocate_fairly(scored, settings.RERANK_TOP_K)
 
-    top = [c for c in scored if c.score >= settings.MIN_RERANK_SCORE][: settings.RERANK_TOP_K]
-    # If the score floor filtered out everything, fall back to the best few
-    # candidates rather than returning nothing — a weak match still beats no
-    # context for the agent to reason from.
-    return top or scored[: min(3, len(scored))]
+    return select_within_floor(scored)
+
+
+def select_within_floor(scored: list[RetrievedChunk]) -> list[RetrievedChunk]:
+    """Apply the rerank score floor without starving the context.
+
+    The cross-encoder scores anything that isn't a direct answer steeply
+    negative — a chunk that is topically relevant but doesn't answer the
+    question lands near -10, well under the floor. On a narrow question that's
+    exactly what you want. On a broad one ("summarise everything", "what do
+    these documents have in common") the floor alone collapsed the context to
+    the single best chunk, so the model could only ever discuss one document
+    and it read as a retrieval failure.
+
+    The floor therefore only *trims*: it never takes the context below
+    MIN_CONTEXT_CHUNKS. Below that we fall back to rank order, because a
+    weakly-scored chunk still beats nothing to reason from, and the system
+    prompt already tells the model to say when the context doesn't cover
+    something.
+
+    Split out from `_search_sync` so it can be tested without a live Qdrant.
+    """
+    above_floor = [c for c in scored if c.score >= settings.MIN_RERANK_SCORE]
+    if len(above_floor) < settings.MIN_CONTEXT_CHUNKS:
+        return scored[: min(settings.MIN_CONTEXT_CHUNKS, len(scored))]
+    return above_floor[: settings.RERANK_TOP_K]
 
 
 async def hybrid_search(

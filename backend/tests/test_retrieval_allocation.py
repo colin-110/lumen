@@ -90,3 +90,38 @@ def test_uneven_document_sizes_drain_without_dropping_chunks():
 def test_empty_input_and_zero_limit_are_safe():
     assert allocate_fairly([], limit=5) == []
     assert allocate_fairly([chunk("a", 0, 1.0)], limit=0) == []
+
+
+class TestScoreFloorNeverStarvesTheContext:
+    """The cross-encoder scores anything that isn't a direct answer steeply
+    negative. Applying the floor alone left broad questions ("summarise
+    everything") with a single chunk, so the model could only ever discuss one
+    document and it looked like retrieval had failed.
+    """
+
+    def test_broad_question_keeps_several_documents_despite_low_scores(self):
+        from app.core.config import settings
+        from app.services.retrieval import select_within_floor as apply_floor
+
+        # Real shape from a trace: one strong hit, the rest topically related
+        # but scored far below the -6.0 floor.
+        ranked = [
+            chunk("expenses", 0, 4.23),
+            chunk("perdiem", 0, -9.74),
+            chunk("travel", 0, -10.48),
+            chunk("vpn", 0, -11.15),
+            chunk("incident", 0, -11.20),
+        ]
+        kept = apply_floor(ranked)
+        assert len(kept) >= settings.MIN_CONTEXT_CHUNKS
+        assert len({c.document_id for c in kept}) > 1  # not a single document
+
+    def test_narrow_question_still_trims_irrelevant_chunks(self):
+        from app.services.retrieval import select_within_floor as apply_floor
+
+        # Plenty above the floor: the floor should do its job and trim the rest.
+        ranked = [chunk(f"d{i}", 0, 5.0 - i * 0.1) for i in range(6)] + [
+            chunk("junk", 0, -11.0)
+        ]
+        kept = apply_floor(ranked)
+        assert all(c.document_id != "junk" for c in kept)
