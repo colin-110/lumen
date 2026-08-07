@@ -11,13 +11,12 @@ Usage: python scripts/load_test.py  (backend must be running at :8000)
 from __future__ import annotations
 
 import asyncio
+import os
 import statistics
+import sys
 import time
 
 import httpx
-
-import os
-import sys
 
 # Point at a deployment with:  python scripts/load_test.py https://host user pass
 BASE = (sys.argv[1] if len(sys.argv) > 1 else os.getenv("LOAD_TEST_BASE", "http://localhost:8000")).rstrip("/")

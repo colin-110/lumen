@@ -22,7 +22,8 @@ from qdrant_client.http import models
 
 from app.core.config import settings
 from app.services import embeddings
-from app.services.qdrant_client import CACHE_COLLECTION_NAME, client as qdrant
+from app.services.qdrant_client import CACHE_COLLECTION_NAME
+from app.services.qdrant_client import client as qdrant
 
 logger = logging.getLogger(__name__)
 
