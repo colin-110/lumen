@@ -85,6 +85,11 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
       abortRef.current?.abort();
       setStreaming(null);
       setSending(false);
+      // The pinned scope belongs to the conversation you're in, not to the app.
+      // Carrying it across a switch meant opening an old chat showed whichever
+      // documents you last picked somewhere else — implying that conversation
+      // had been scoped to them when it hadn't. Clear it on every switch.
+      setScopedDocumentIds([]);
       loadHistory(initialConversationId);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

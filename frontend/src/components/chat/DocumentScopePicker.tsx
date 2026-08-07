@@ -59,7 +59,11 @@ export function DocumentScopePicker({ selectedIds, onChange, disabled }: Props) 
         type="button"
         onClick={() => setOpen(!open)}
         disabled={disabled}
-        title="Limit this question to specific documents"
+        title={
+          selectedIds.length
+            ? `Answers will use only these ${selectedIds.length} documents`
+            : "Answers can use any of your documents. Click to restrict them."
+        }
         className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs transition-colors disabled:opacity-60 ${
           selectedIds.length
             ? "border-primary/40 bg-accent text-accent-foreground"
@@ -67,14 +71,14 @@ export function DocumentScopePicker({ selectedIds, onChange, disabled }: Props) 
         }`}
       >
         <Scale size={12} />
-        {selectedIds.length ? `Comparing ${selectedIds.length}` : "All documents"}
+        {selectedIds.length ? `Only ${selectedIds.length} documents` : "All documents"}
       </button>
 
       {open && (
         <div className="absolute bottom-full left-0 mb-2 w-72 max-h-72 overflow-y-auto scrollbar-thin rounded-2xl border border-border bg-surface shadow-xl z-30 animate-scale-in">
           <div className="flex items-center justify-between px-3 py-2 border-b border-border">
             <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Scope
+              Search only these
             </span>
             {selectedIds.length > 0 && (
               <button
@@ -106,8 +110,11 @@ export function DocumentScopePicker({ selectedIds, onChange, disabled }: Props) 
             );
           })}
           <p className="px-3 py-2 text-[11px] leading-relaxed text-muted-foreground border-t border-border">
-            Pick two or more to compare them. Each pinned document is guaranteed a share of the
-            context, so a long one can&apos;t crowd out a short one.
+            Nothing selected searches every document. Selecting some restricts answers to just
+            those — useful for comparing two files, since each one is then guaranteed a share of
+            the context and a long document can&apos;t crowd out a short one.
+            <br />
+            <span className="opacity-70">Applies to your next message, and resets when you switch chats.</span>
           </p>
         </div>
       )}
