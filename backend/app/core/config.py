@@ -173,6 +173,11 @@ class Settings(BaseSettings):
     RETRIEVE_CANDIDATES: int = 40  # pulled from Qdrant before reranking
     RERANK_TOP_K: int = 6  # handed to the LLM after reranking
     MIN_RERANK_SCORE: float = -6.0  # cross-encoder logit floor
+    # Floor never trims below this. The cross-encoder scores anything that
+    # isn't a direct answer steeply negative, so on broad questions the floor
+    # alone would leave a single chunk and the model could only discuss one
+    # document. See _search_sync in services/retrieval.py.
+    MIN_CONTEXT_CHUNKS: int = 4
 
     # ------------------------------------------------------------------ ocr
     # Scanned/image-only PDF pages have no text layer for PyMuPDF to read.
