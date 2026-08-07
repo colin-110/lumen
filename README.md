@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-73%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-99%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -287,7 +287,7 @@ loaded, not at idle:
 | frontend | 34 MB / 200 MB |
 | redis | 13 MB / 256 MB |
 
-Test suite: **73 tests** (`pytest`), covering JWT/password-hashing correctness, text chunking,
+Test suite: **99 tests** — 73 backend (`pytest`) and 26 frontend (`vitest`), covering JWT/password-hashing correctness, text chunking,
 retrieval-metric maths, LLM-judge output parsing, fair multi-document context allocation, and
 regression coverage for two real bugs — a config-parsing crash on an empty/comma-separated env var,
 and a global top-k selection that dropped a pinned document out of a comparison entirely.
@@ -466,7 +466,7 @@ response includes the system prompt and raw chunk text.
 ## Testing & CI
 
 ```bash
-make test             # pytest — auth, chunking, config-parsing, eval-metric/judge tests
+make test             # pytest + vitest — auth, chunking, config-parsing, eval-metric/judge tests
 make lint             # ruff (backend) + eslint (frontend)
 make eval-retrieval   # retrieval quality harness — free, no LLM calls
 make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above

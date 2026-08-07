@@ -31,6 +31,7 @@ seed:
 
 test:
 	cd backend && poetry run pytest
+	cd frontend && npm test
 
 lint:
 	cd backend && poetry run ruff check .
