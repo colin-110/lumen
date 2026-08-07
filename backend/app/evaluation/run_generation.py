@@ -32,7 +32,7 @@ from app.evaluation.judge import judge_answer
 # Private helpers imported on purpose: the harness is only meaningful if it
 # grades the *actual* production prompt and context formatting. Re-declaring
 # them here would let the eval silently drift from what chat really sends.
-from app.services.agent import SYSTEM_PROMPT, _build_sources, _format_context
+from app.services.agent import SYSTEM_PROMPT, _format_context
 from app.services.llm_router import MODEL_ALIAS, get_router
 from app.services.retrieval import hybrid_search
 
@@ -78,7 +78,6 @@ RETRY_DELAYS_SECONDS = [5, 20, 40]  # generous — this app's litellm Router has
 async def _run_case(question, org_str, owner_str) -> CaseResult:
     start = time.perf_counter()
     chunks = await hybrid_search(question.question, org_str, owner_str)
-    sources = _build_sources(chunks)
     context = _format_context(chunks)
 
     answer = await _generate_answer(question.question, context)
