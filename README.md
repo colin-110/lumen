@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-111%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-121%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -490,13 +490,13 @@ response includes the system prompt and raw chunk text.
 ## Testing & CI
 
 ```bash
-make test             # pytest (85) + vitest (26)
+make test             # pytest (95) + vitest (26)
 make lint             # ruff (backend) + eslint (frontend)
 make eval-retrieval   # retrieval quality harness — free, no LLM calls
 make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above
 ```
 
-**111 tests across five layers.** Each targets something that can break silently
+**121 tests across six layers.** Each targets something that can break silently
 rather than padding a count with render smoke tests.
 
 | Layer | Count | What it protects |
@@ -505,6 +505,7 @@ rather than padding a count with render smoke tests.
 | Unit — retrieval | 21 | Fair multi-document allocation, score-floor selection, structure-aware chunking |
 | Unit — evaluation | 20 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
 | Contract — API | 4 | Auth is actually enforced on chat and upload; OpenAPI schema loads |
+| Security — tenant isolation | 10 | The Qdrant filter always carries a tenant condition, and caller-supplied `document_ids` narrows it rather than replacing it |
 | Regression | 33 | Every bug in the table below, reproduced then locked down |
 | Frontend — Vitest | 26 | SSE frame parsing, citation numbering, typed error rendering |
 
@@ -517,8 +518,12 @@ Notable cases, chosen because they're the ones that would otherwise regress unno
 - **Fair allocation** — reproduces a measured trace where six contract chunks
   out-ranked an invoice's only chunk, and asserts the invoice still reaches the model.
 - **Quota vs. auth** — asserts a spent quota is never rendered as "rejected the API key".
+- **Tenant isolation** —  arrives in the request body, so it is
+  attacker-controlled. A test asserts it is ANDed onto the tenant condition rather than
+  substituted for it, and that no retrieval entry point can be called without a tenant
+  argument. Cross-tenant leakage would be silent — the answers would still look plausible.
 
-**Pipeline.** Push to `main` → CI (lint, 85 pytest, 26 vitest, Next build) → on success,
+**Pipeline.** Push to `main` → CI (lint, 95 pytest, 26 vitest, Next build) → on success,
 CD deploys to EC2 over AWS SSM and runs a health smoke test. Deployment uses SSM rather
 than SSH specifically so the instance needs **no inbound port opened** to GitHub's dynamic
 runner IPs. The deploy IAM user is scoped to `ssm:SendCommand` on one instance ARN.
