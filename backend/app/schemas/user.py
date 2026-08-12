@@ -14,7 +14,13 @@ class UserCreate(UserBase):
     password: str = Field(..., min_length=8, max_length=128)
     full_name: str | None = Field(None, min_length=1, max_length=100)
     organization_name: str | None = Field(
-        None, description="If set, creates a new organization for this user."
+        None,
+        min_length=1,
+        max_length=255,
+        description=(
+            "Joins the organization with this name, creating it if it does not exist yet. "
+            "Matching is case-insensitive."
+        ),
     )
 
 

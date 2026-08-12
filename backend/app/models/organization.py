@@ -16,7 +16,11 @@ if TYPE_CHECKING:
 
 class Organization(Base, TimestampMixin):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    name: Mapped[str] = mapped_column(String(255), index=True, nullable=False)
+    # Unique because the name is how registration resolves an organization.
+    # Without the constraint, two people typing the same company name landed
+    # in two different tenants and could not see each other's documents —
+    # which quietly made org-scoped sharing unreachable in practice.
+    name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
 
     users: Mapped[list["User"]] = relationship(back_populates="organization")
     documents: Mapped[list["Document"]] = relationship(back_populates="organization")

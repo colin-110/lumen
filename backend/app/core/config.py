@@ -11,8 +11,13 @@ import json
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
-from pydantic import PostgresDsn, RedisDsn, computed_field, field_validator
+from pydantic import PostgresDsn, RedisDsn, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+INSECURE_SECRET_KEY = "dev-only-insecure-key-change-me"
+# Shipped in .env.example; if it survives into a real deployment it is a
+# default credential, not a configuration choice.
+INSECURE_SUPERUSER_PASSWORD = "admin12345"
 
 
 class Settings(BaseSettings):
@@ -37,15 +42,25 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT == "local"
 
     # ------------------------------------------------------------- security
-    SECRET_KEY: str = "dev-only-insecure-key-change-me"
+    SECRET_KEY: str = INSECURE_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
     # Registration is open in local dev; lock it down elsewhere.
     ALLOW_OPEN_REGISTRATION: bool = True
     FIRST_SUPERUSER_EMAIL: str = "admin@enterprise.ai"
-    FIRST_SUPERUSER_PASSWORD: str = "admin12345"
+    FIRST_SUPERUSER_PASSWORD: str = INSECURE_SUPERUSER_PASSWORD
     FIRST_ORG_NAME: str = "Acme Corp"
+
+    # Scrape guard for /metrics. Unset means the endpoint is open, which is
+    # only acceptable on a private network — enforced below for non-local
+    # environments.
+    METRICS_TOKEN: str | None = None
+
+    # Auth endpoints are unauthenticated by definition, so they are limited by
+    # client IP rather than by user id.
+    RATE_LIMIT_LOGIN_PER_MINUTE: int = 10
+    RATE_LIMIT_REGISTER_PER_MINUTE: int = 5
 
     # NoDecode: pydantic-settings would otherwise try to JSON-decode this env
     # var itself before our validator runs, and fail on a plain comma-separated
@@ -227,15 +242,78 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_ENABLED: bool = True
     SEMANTIC_CACHE_THRESHOLD: float = 0.97
     SEMANTIC_CACHE_TTL_SECONDS: int = 60 * 60 * 6
+    # How often the app sweeps expired cache entries out of Qdrant. The TTL
+    # is only a read filter; without this sweep nothing is ever deleted.
+    SEMANTIC_CACHE_SWEEP_SECONDS: int = 15 * 60
 
     # ------------------------------------------------------------ limiting
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_CHAT_PER_MINUTE: int = 30
     RATE_LIMIT_UPLOAD_PER_MINUTE: int = 20
 
+    # Whether X-Forwarded-For/X-Request-ID may be believed. True only when
+    # something trustworthy (an ALB, Caddy, nginx) sets them; otherwise a
+    # client can forge both, which turns per-IP rate limiting into a no-op.
+    TRUSTED_PROXY_HEADERS: bool = False
+
     # ------------------------------------------------------ web search tool
     WEB_SEARCH_ENABLED: bool = False
     TAVILY_API_KEY: str | None = None
+
+    # ------------------------------------------------------- request limits
+    # A prompt is built from the question plus retrieved context, so an
+    # unbounded question is an unbounded bill and a guaranteed context-window
+    # error. Bound it at the edge instead of discovering it at the provider.
+    MAX_MESSAGE_CHARS: int = 8000
+    MAX_PINNED_DOCUMENTS: int = 20
+    # MAX_HISTORY_MESSAGES caps the number of turns; this caps their total
+    # size, which is what actually determines the prompt cost.
+    MAX_HISTORY_CHARS: int = 24000
+
+    @model_validator(mode="after")
+    def _reject_insecure_production_defaults(self) -> Settings:
+        """Refuse to boot with development credentials outside `local`.
+
+        Every one of these has a safe-looking default so that `pytest`, a
+        fresh clone and `make setup` all work with no configuration. That
+        convenience is exactly what makes them dangerous the moment the same
+        file is deployed: nothing else in the system would ever notice that
+        the JWT signing key is the one published in .env.example.
+        """
+        if self.ENVIRONMENT == "local":
+            return self
+
+        problems: list[str] = []
+        if self.SECRET_KEY == INSECURE_SECRET_KEY:
+            problems.append(
+                "SECRET_KEY is still the published development value — anyone can forge a JWT. "
+                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            )
+        if len(self.SECRET_KEY) < 32:
+            problems.append("SECRET_KEY must be at least 32 characters")
+        if self.FIRST_SUPERUSER_PASSWORD == INSECURE_SUPERUSER_PASSWORD:
+            problems.append("FIRST_SUPERUSER_PASSWORD is still the published development value")
+        if self.ALLOW_OPEN_REGISTRATION:
+            problems.append(
+                "ALLOW_OPEN_REGISTRATION=true lets anyone create an account (and an organization) "
+                "on a public deployment; set it to false and provision users deliberately"
+            )
+        if self.POSTGRES_PASSWORD == "postgres":
+            problems.append("POSTGRES_PASSWORD is still the default")
+        if self.S3_SECRET_KEY == "minioadmin":
+            problems.append("S3_SECRET_KEY is still the MinIO default")
+        if not self.METRICS_TOKEN:
+            problems.append(
+                "METRICS_TOKEN is unset, which leaves /metrics publicly scrapable; set a random "
+                "value and pass it to Prometheus as a bearer token"
+            )
+
+        if problems:
+            raise ValueError(
+                f"Refusing to start with ENVIRONMENT={self.ENVIRONMENT} and insecure defaults:\n  - "
+                + "\n  - ".join(problems)
+            )
+        return self
 
     @computed_field
     @property

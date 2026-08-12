@@ -34,16 +34,20 @@ class CacheHit:
     sources: list[dict[str, Any]]
 
 
+def _scope_condition(organization_id: str | None, owner_id: str) -> models.FieldCondition:
+    if organization_id:
+        return models.FieldCondition(
+            key="organization_id", match=models.MatchValue(value=organization_id)
+        )
+    return models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))
+
+
 def _tenant_filter(organization_id: str | None, owner_id: str) -> list[models.FieldCondition]:
     now = time.time()
-    conditions = [models.FieldCondition(key="expires_at", range=models.Range(gt=now))]
-    if organization_id:
-        conditions.append(
-            models.FieldCondition(key="organization_id", match=models.MatchValue(value=organization_id))
-        )
-    else:
-        conditions.append(models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id)))
-    return conditions
+    return [
+        models.FieldCondition(key="expires_at", range=models.Range(gt=now)),
+        _scope_condition(organization_id, owner_id),
+    ]
 
 
 def _lookup_sync(query: str, organization_id: str | None, owner_id: str) -> CacheHit | None:
@@ -73,6 +77,9 @@ def _store_sync(
     query: str, answer: str, sources: list[dict[str, Any]], organization_id: str | None, owner_id: str
 ) -> None:
     vec = embeddings.embed_dense_one(query)
+    # Recorded so a single document's deletion can invalidate exactly the
+    # answers that cited it, instead of every answer the tenant ever received.
+    document_ids = sorted({s["document_id"] for s in sources if s.get("document_id")})
     qdrant.upsert(
         collection_name=CACHE_COLLECTION_NAME,
         points=[
@@ -83,6 +90,7 @@ def _store_sync(
                     "question": query,
                     "answer": answer,
                     "sources": sources,
+                    "document_ids": document_ids,
                     "organization_id": organization_id,
                     "owner_id": owner_id,
                     "expires_at": time.time() + settings.SEMANTIC_CACHE_TTL_SECONDS,
@@ -117,19 +125,93 @@ def _invalidate_sync(organization_id: str | None, owner_id: str) -> None:
     qdrant.delete(
         collection_name=CACHE_COLLECTION_NAME,
         points_selector=models.FilterSelector(
-            filter=models.Filter(must=_tenant_filter(organization_id, owner_id)[1:])
+            filter=models.Filter(must=[_scope_condition(organization_id, owner_id)])
         ),
     )
 
 
 async def invalidate(organization_id: str | None, owner_id: str) -> None:
-    """Bust every cached answer for this tenant. Call whenever the document set
-    changes (ingestion completes, a document is deleted) so a near-duplicate
-    question can't serve a stale answer/citations from before the change —
-    the cache has no other way to know the underlying document set moved."""
+    """Bust every cached answer for this tenant.
+
+    Used when a document is *added*. It is deliberately the blunt instrument:
+    a new document can change the answer to a question whose cached entry
+    cites entirely different documents (or none at all), and there is no way
+    to identify those entries without re-running retrieval for every one of
+    them. Over-invalidating costs cache hits; under-invalidating serves
+    answers that are now wrong.
+
+    Deletion is the precise case — see `invalidate_for_document`.
+    """
     if not settings.SEMANTIC_CACHE_ENABLED:
         return
     try:
         await asyncio.to_thread(_invalidate_sync, organization_id, owner_id)
     except Exception:
         logger.warning("Semantic cache invalidation failed", exc_info=True)
+
+
+def _invalidate_for_document_sync(
+    organization_id: str | None, owner_id: str, document_id: str
+) -> None:
+    qdrant.delete(
+        collection_name=CACHE_COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[
+                    _scope_condition(organization_id, owner_id),
+                    models.FieldCondition(
+                        key="document_ids", match=models.MatchValue(value=document_id)
+                    ),
+                ]
+            )
+        ),
+    )
+
+
+async def invalidate_for_document(
+    organization_id: str | None, owner_id: str, document_id: str
+) -> None:
+    """Drop only the cached answers that cited a now-deleted document.
+
+    Removing a document cannot change an answer that never referenced it, so
+    wiping the tenant's whole cache here just throws away valid work. In an
+    organization that uploads and deletes regularly, that blanket wipe kept
+    the cache empty almost all the time — the feature was present but
+    unreachable.
+    """
+    if not settings.SEMANTIC_CACHE_ENABLED:
+        return
+    try:
+        await asyncio.to_thread(
+            _invalidate_for_document_sync, organization_id, owner_id, document_id
+        )
+    except Exception:
+        logger.warning("Semantic cache invalidation failed", exc_info=True)
+
+
+def _evict_expired_sync() -> None:
+    qdrant.delete(
+        collection_name=CACHE_COLLECTION_NAME,
+        points_selector=models.FilterSelector(
+            filter=models.Filter(
+                must=[models.FieldCondition(key="expires_at", range=models.Range(lte=time.time()))]
+            )
+        ),
+    )
+
+
+async def evict_expired() -> None:
+    """Delete entries past their TTL.
+
+    `expires_at` was only ever used as a *read* filter, so expired points were
+    skipped by lookups but never removed: every question the system had ever
+    answered stayed in Qdrant forever as a vector plus its full answer text.
+    The collection grew without bound and search slowed with it. Run
+    periodically from the app lifespan.
+    """
+    if not settings.SEMANTIC_CACHE_ENABLED:
+        return
+    try:
+        await asyncio.to_thread(_evict_expired_sync)
+    except Exception:
+        logger.warning("Semantic cache eviction sweep failed", exc_info=True)

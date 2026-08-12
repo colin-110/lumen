@@ -43,11 +43,21 @@ def extract_text(file_path: str, filename: str) -> str:
         return _extract_plain_text(file_path)
 
     # Last resort: try decoding as text before giving up, since some plain
-    # text files arrive without a recognized extension.
-    try:
-        return _extract_plain_text(file_path)
-    except UnicodeDecodeError as exc:
-        raise UnsupportedDocumentError(f"Unsupported file type: {suffix or '(none)'}") from exc
+    # text files arrive without a recognized extension. `_extract_plain_text`
+    # no longer raises on undecodable bytes (it falls back through cp1252 and
+    # latin-1, which accept anything), so the binary check has to be explicit
+    # here — otherwise an unknown binary would be "successfully" ingested as
+    # several thousand chunks of mojibake.
+    if _looks_binary(file_path):
+        raise UnsupportedDocumentError(f"Unsupported file type: {suffix or '(none)'}")
+    return _extract_plain_text(file_path)
+
+
+def _looks_binary(file_path: str, sample_bytes: int = 8192) -> bool:
+    """A NUL byte in the first few KB is the standard heuristic, and the one
+    `file(1)` and git both use. Text formats do not contain them."""
+    with open(file_path, "rb") as f:
+        return b"\x00" in f.read(sample_bytes)
 
 
 def _extract_pdf(file_path: str) -> str:
@@ -91,11 +101,52 @@ def _extract_docx(file_path: str) -> str:
     doc = DocxDocument(file_path)
     parts = [p.text for p in doc.paragraphs if p.text.strip()]
     for table in doc.tables:
-        for row in table.rows:
-            parts.append(" | ".join(cell.text for cell in row.cells))
-    return "\n\n".join(parts)
+        parts.append(_render_table(table))
+    return "\n\n".join(p for p in parts if p.strip())
+
+
+def _render_table(table) -> str:
+    """Render a table as markdown, repeating the header on every row group.
+
+    Flattening every row to "a | b | c" dropped which column each value was
+    in, so a chunk taken from the middle of a table reached the model as a
+    row of bare values with no idea what they meant. Keeping the header row
+    and marking it as such lets the model attribute a cell to its column, and
+    the pipe layout survives chunking as plain text.
+    """
+    rows = [[cell.text.strip().replace("\n", " ") for cell in row.cells] for row in table.rows]
+    rows = [r for r in rows if any(c for c in r)]
+    if not rows:
+        return ""
+    if len(rows) == 1:
+        return " | ".join(rows[0])
+
+    header, *body = rows
+    lines = [
+        " | ".join(header),
+        " | ".join("---" for _ in header),
+        *(" | ".join(r) for r in body),
+    ]
+    return "\n".join(lines)
 
 
 def _extract_plain_text(file_path: str) -> str:
-    with open(file_path, encoding="utf-8") as f:
-        return f.read()
+    """Decode a text file, preferring UTF-8 but never failing on it.
+
+    Opening with a strict UTF-8 codec meant a CSV exported from Excel
+    (cp1252) or any Latin-1 document raised UnicodeDecodeError and was
+    recorded as unprocessable — for the sake of a handful of accented
+    characters. Try the likely encodings in order, then fall back to lossy
+    UTF-8: a document with a few replacement characters is still searchable,
+    a rejected one is not.
+    """
+    raw = Path(file_path).read_bytes()
+    if raw.startswith(b"\xef\xbb\xbf"):
+        return raw.decode("utf-8-sig")
+
+    for encoding in ("utf-8", "cp1252", "latin-1"):
+        try:
+            return raw.decode(encoding)
+        except UnicodeDecodeError:
+            continue
+    return raw.decode("utf-8", errors="replace")

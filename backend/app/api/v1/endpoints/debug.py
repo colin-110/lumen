@@ -159,8 +159,9 @@ async def debug_retrieval(
         if doc_ids
         else (
             f"Production cut: keep rerank score >= {settings.MIN_RERANK_SCORE}, take at most "
-            f"{settings.RERANK_TOP_K}. If the floor removes everything, the best 3 are kept anyway "
-            "so the model still has something to reason from."
+            f"{settings.RERANK_TOP_K}. If the floor removes everything, the best "
+            f"{settings.MIN_CONTEXT_CHUNKS} are kept anyway so the model still has something "
+            "to reason from."
         )
     )
     selected_raw, _ = await add_stage(

@@ -11,14 +11,24 @@
 set -euo pipefail
 
 REPO="${REPO:-/home/ec2-user/lumen}"
-COMPOSE_FILES=(
-  -f docker-compose.yml
-  -f docker-compose.free-tier.yml
-  -f docker-compose.ec2.yml
-  -f docker-compose.caddy.yml
-)
 
 cd "$REPO"
+
+# Base layers are tracked in the repo. The host-specific ones (instance
+# sizing, the Caddy TLS front end) are not, and referencing them
+# unconditionally made this script abort under `set -e` on any checkout that
+# didn't have them — i.e. every clone, including a fresh provision of the box
+# it is meant to deploy to. Include each overlay only if it is actually
+# present, and say which ones were used.
+COMPOSE_FILES=(-f docker-compose.yml -f docker-compose.free-tier.yml)
+for overlay in docker-compose.ec2.yml docker-compose.caddy.yml; do
+  if [ -f "$overlay" ]; then
+    COMPOSE_FILES+=(-f "$overlay")
+  else
+    echo "==> note: $overlay not present, skipping"
+  fi
+done
+echo "==> compose files: ${COMPOSE_FILES[*]}"
 
 echo "==> fetching origin/main"
 git fetch --quiet origin main
@@ -28,18 +38,19 @@ echo "    now at $(git log --oneline -1)"
 echo "==> building"
 docker compose "${COMPOSE_FILES[@]}" build
 
+echo "==> migrating"
+# Before `up`, not after. Running migrations against an already-serving
+# backend left a window where the new code was taking traffic against the old
+# schema. The `migrate` service depends only on a healthy database, so it can
+# run on its own — and `up` afterwards will wait on the same service having
+# completed successfully, which makes this idempotent rather than duplicated.
+#
+# The previous readiness probe (`import app.db.session` inside the backend
+# container) proved only that a module imported; it never touched Postgres.
+docker compose "${COMPOSE_FILES[@]}" run --rm migrate
+
 echo "==> starting"
 docker compose "${COMPOSE_FILES[@]}" up -d
-
-echo "==> migrating"
-# The backend needs to be accepting connections before alembic can run.
-for _ in $(seq 1 30); do
-  if docker compose "${COMPOSE_FILES[@]}" exec -T backend python -c "import app.db.session" >/dev/null 2>&1; then
-    break
-  fi
-  sleep 5
-done
-docker compose "${COMPOSE_FILES[@]}" exec -T backend alembic upgrade head
 
 echo "==> pruning old images"
 # Untagged layers only; keeps disk from filling on a 30GB volume after repeated

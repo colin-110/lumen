@@ -1,3 +1,20 @@
+# --- deps: turn the lock file into a pinned requirements list -----------
+# A stage of its own, and not merely tidiness. Installing poetry alongside the
+# application in one stage puts poetry's own dependencies (requests, urllib3,
+# certifi, ...) into that stage's site-packages, and `pip install --prefix`
+# then treats them as already satisfied and skips them — so they never land in
+# /install, and the runtime image dies on `import requests` from inside
+# fastembed. Poetry runs where nothing else is installed and only its output
+# crosses over.
+FROM python:3.12-slim AS deps
+
+WORKDIR /app
+RUN pip install --no-cache-dir poetry==1.8.5 poetry-plugin-export
+COPY pyproject.toml poetry.lock ./
+RUN poetry export --format requirements.txt --without-hashes --only main \
+    --output /requirements.txt
+
+
 # --- builder: compile/install into a self-contained prefix --------------
 FROM python:3.12-slim AS builder
 
@@ -14,13 +31,19 @@ ENV PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# pyproject.toml declares poetry-core as its PEP 517 build backend, so a
-# plain `pip install` builds and installs correctly without the poetry CLI
-# itself — one fewer moving part, and a smaller/faster image than installing
-# poetry just to immediately disable its virtualenv.
+# Dependencies come from poetry.lock, not from pyproject's version ranges.
+# `pip install .` resolved the carets fresh on every build, so two builds of
+# the same commit could ship different versions of litellm, fastembed or
+# qdrant-client — and a green CI run said nothing about what production would
+# actually get.
+COPY --from=deps /requirements.txt /tmp/requirements.txt
+RUN pip install --prefix=/install -r /tmp/requirements.txt
+
+# The application itself, without dependency resolution: everything it needs
+# is pinned and installed above.
 COPY pyproject.toml ./
 COPY app ./app
-RUN pip install --prefix=/install .
+RUN pip install --prefix=/install --no-deps .
 
 # Prune transitive dependencies that inference never loads.
 #

@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-126%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-195%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -89,7 +89,12 @@ both documents.
   Tesseract automatically, per-page, so mixed born-digital/scanned PDFs only pay the OCR cost on
   the pages that actually need it.
 - **Real auth** — JWT access + refresh tokens, bcrypt password hashing, per-organization data
-  isolation.
+  isolation, and token versioning so deactivating a user or changing a password revokes the
+  credentials already issued to them instead of waiting out the refresh token's 14 days.
+- **Organizations are shared tenants** — registering with an `organization_name` joins the
+  organization of that name (case-insensitive), creating it only if none exists. Documents are
+  visible to everyone in the organization and deletable only by whoever uploaded them; the
+  documents API and Qdrant retrieval apply the same boundary from one definition each.
 - **Observability out of the box** — Prometheus metrics + a provisioned Grafana dashboard
   (request rate, latency percentiles, error rate) with zero manual setup.
 - **Type-ahead composer** — suggests example prompts and recent conversation titles as you type.
@@ -193,9 +198,11 @@ git clone https://github.com/colin-110/lumen.git
 cd lumen
 cp .env.example backend/.env       # then fill in at least one LLM provider key
 docker compose up -d
-docker compose exec backend alembic upgrade head
-docker compose exec backend python scripts/seed.py
+docker compose exec backend python -m scripts.seed
 ```
+
+Migrations run automatically: the stack has a one-shot `migrate` service that the backend and
+worker wait on, so `docker compose up -d` alone gives you a working database.
 
 Open `http://localhost:3000` — log in with the seeded admin (`admin@enterprise.ai` /
 `admin12345`, or whatever `FIRST_SUPERUSER_EMAIL`/`FIRST_SUPERUSER_PASSWORD` you set), upload a
@@ -209,6 +216,14 @@ document, and ask it a question.
 | Prometheus | http://localhost:9090 |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO console | http://localhost:9006 |
+
+Everything except the app and the API binds to `127.0.0.1` — the datastores are reachable from
+the host for debugging but not from the network.
+
+**Going past local.** Setting `ENVIRONMENT` to `staging` or `production` makes the app refuse to
+start while any development credential is still in place — the signing key, the seeded superuser
+password, open registration, the Postgres and MinIO defaults, and an unguarded `/metrics`. It
+reports all of them at once rather than one restart at a time.
 
 A `Makefile` wraps the common commands: `make up`, `make down`, `make logs`, `make migrate`,
 `make seed`, `make test`, `make lint`, plus `make eval-retrieval` and `make eval-generation`
@@ -517,25 +532,35 @@ response includes the system prompt and raw chunk text.
 ## Testing & CI
 
 ```bash
-make test             # pytest (100) + vitest (26)
+make test             # pytest (169) + vitest (26)
+make test-unit        # backend unit tests only — no services needed
+make test-integration # backend integration tests — needs `make up`
 make lint             # ruff (backend) + eslint (frontend)
 make eval-retrieval   # retrieval quality harness — free, no LLM calls
 make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above
 ```
 
-**126 tests across seven layers.** Each targets something that can break silently
-rather than padding a count with render smoke tests.
+**169 backend + 26 frontend tests across nine layers.** Each targets something that can break
+silently rather than padding a count with render smoke tests.
 
 | Layer | Count | What it protects |
 |---|---:|---|
 | Unit — security | 7 | JWT round-trip, tampered-signature rejection, bcrypt salting and the 72-byte truncation edge |
-| Unit — retrieval | 21 | Fair multi-document allocation, score-floor selection, structure-aware chunking |
-| Unit — evaluation | 20 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
-| Contract — API | 4 | Auth is actually enforced on chat and upload; OpenAPI schema loads |
+| Unit — retrieval | 33 | Fair multi-document allocation, score-floor selection, structure-aware chunking, and that splitting never alters the text it splits |
+| Unit — evaluation | 13 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
+| Unit — prompt budget | 9 | History is bounded by characters and not just turn count; request fields are bounded at the edge |
+| Config — production guard | 11 | The app refuses to boot on any development credential outside `local`, and reports all of them at once |
+| Observability | 11 | Metric labels are route templates (not per-UUID series), request ids can't forge log lines, `/metrics` honours its token |
 | Security — tenant isolation | 10 | The Qdrant filter always carries a tenant condition, and caller-supplied `document_ids` narrows it rather than replacing it |
+| Integration — API | 31 | Against a real Postgres: organizations resolve to one tenant, documents are org-visible and owner-deletable, streamed replies persist without leaking connections, sidebar order follows activity, revoked tokens stop working |
 | Concurrency — worker | 5 | Ingestion tasks share one event loop per process, so the DB pool outlives task 1 |
-| Regression | 33 | Every bug in the table below, reproduced then locked down |
 | Frontend — Vitest | 26 | SSE frame parsing, citation numbering, typed error rendering |
+
+The integration layer exists because every defect in the table below lived in a seam a unit test
+cannot reach — dependency lifetimes, transaction boundaries, the SSE response body, and the
+interaction between a SQLAlchemy relationship and `updated_at`. All of them looked correct in
+isolation. They are skipped, not failed, when no database is reachable, so `pytest` on a laptop
+with nothing running still executes the unit suite.
 
 Notable cases, chosen because they're the ones that would otherwise regress unnoticed:
 
@@ -577,6 +602,16 @@ Each was found by measuring rather than reading, reproduced, then covered by a t
 | **Chunks straddling sections** | Flat character splitting mixed the tail of one clause with the head of the next | Split at headings; every chunk carries its heading |
 | **Upload appeared to vanish** | Progress chip removed before the awaited list refetch returned | Await invalidation, then clear the chip |
 | **Frontend called `localhost` in prod** | `NEXT_PUBLIC_API_URL` is inlined at *build* time and was baked as localhost | Build arg set to the public origin; single-origin via Caddy |
+| **One leaked DB connection per streamed chat** | The SSE generator closed over the request's `Depends(get_db)` session. FastAPI 0.106 moved yield-dependency teardown to *before* the response body is sent — measured order on fastapi 0.115.14 is dependency enter → endpoint → **dependency exit** → stream body. SQLAlchemy doesn't raise on a closed session, it checks out a fresh connection; nothing returns it, because the `async with` that would have has already run. `pool.checkedout()` climbed by one per request until the GC force-terminated connections, against a pool of 20 + 10. Separately, on a client disconnect the `await` in the cleanup path re-raised `CancelledError` before the INSERT was issued — losing exactly the transcript that code existed to preserve | The generator opens its own session; the write runs as a detached task and is awaited only on the normal path, so it survives cancellation |
+| **Sidebar ordered by creation, not activity** | `list_for_user` orders by `Conversation.updated_at`, but adding a message only INSERTs into `message` — the conversation row was never touched, so `onupdate` never fired. `touch()` was written for this and never called from anywhere | `touch()` takes an id and is called on every persisted turn; index on `(user_id, updated_at DESC)` |
+| **Sentence punctuation deleted from chunks** | The splitter used `str.split(sep)`, which discards the separator, and rejoined with a space. For the `". "`, `"? "` and `"! "` separators that removed the punctuation: 10 of 11 periods vanished from a plain paragraph | Separators are reattached to the piece they followed, and pieces concatenate with no joining character — the source text is reproduced exactly |
+| **Colleagues in the same org were separate tenants** | Registration created a new `Organization` for every signup, so two people typing "Acme Corp" got different `organization_id`s. Org-scoped retrieval and caching were unreachable in practice | Unique organization names + case-insensitive get-or-create; migration merges pre-existing duplicates |
+| **Chat cited documents the API 404'd on** | The documents API scoped by `owner_id` while `retrieval._tenant_filter` scoped by `organization_id` | One tenant clause in Postgres mirroring the Qdrant one; org-visible, owner-deletable |
+| **Cache grew without bound** | `expires_at` was only ever a read filter; nothing deleted expired points, so every question ever asked stayed resident forever | Periodic eviction sweep from the app lifespan |
+| **Deactivating a superuser didn't lock them out** | `get_current_active_superuser` chained off `get_current_user`, skipping the `is_active` check, and a JWT stayed valid to expiry regardless of the account behind it | Chained off `get_current_active_user`; `token_version` claim re-checked per request and bumped on deactivation and password change |
+| **Prometheus series grew per UUID** | `request.url.path` was used as a metric label, so every document and conversation id minted a new time series | The route *template* is used; unmatched paths collapse to one bucket |
+| **Rate limiter took out the endpoints it protected** | An unguarded `redis.incr`, so a Redis blip returned 500 for every chat and upload — while login and register had no limit at all | Fails open with a logged warning and socket timeouts; per-IP and per-account limits added to the auth endpoints |
+| **Builds were not reproducible** | No `poetry.lock`; CI and the Dockerfile both resolved caret ranges fresh, so a green CI run said nothing about what production would get | Lock file committed, exported into the image, and `poetry check --lock` gates CI |
 
 ---
 

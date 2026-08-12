@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -26,6 +27,34 @@ REQUEST_COUNT = Counter(
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "path"]
 )
+
+# Request ids are echoed into every log line and returned in a header, so an
+# unvalidated client-supplied value is a log-injection vector (newlines and
+# control characters forging log entries) and an unbounded string.
+_REQUEST_ID_RE = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _metric_path(request: Request) -> str:
+    """The route *template*, never the concrete URL.
+
+    Prometheus labels must be low-cardinality. Using `request.url.path`
+    created a new time series for every document and conversation UUID that
+    was ever requested — unbounded series growth that degrades the Prometheus
+    server rather than this one, so nothing here would ever surface it.
+    Unmatched paths (404s, scans) collapse to a single bucket for the same
+    reason.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    if path:
+        return path
+    return "__unmatched__"
+
+
+def _safe_request_id(raw: str | None) -> str:
+    if raw and _REQUEST_ID_RE.match(raw):
+        return raw
+    return str(uuid.uuid4())
 
 
 @asynccontextmanager
@@ -72,11 +101,30 @@ async def lifespan(app: FastAPI):
 
     warm_task = asyncio.create_task(_warm_llm_router())
 
+    # The semantic cache marks entries with `expires_at` and filters expired
+    # ones out of lookups, but nothing ever deleted them — the collection grew
+    # by one vector plus a full answer body per distinct question, forever.
+    # This is that missing sweep.
+    async def _evict_cache_periodically() -> None:
+        from app.services import semantic_cache
+
+        while True:
+            try:
+                await asyncio.sleep(settings.SEMANTIC_CACHE_SWEEP_SECONDS)
+                await semantic_cache.evict_expired()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.warning("Semantic cache sweep failed; will retry", exc_info=True)
+
+    sweep_task = asyncio.create_task(_evict_cache_periodically())
+
     yield
 
-    # Don't let a half-finished import outlive the app.
-    if not warm_task.done():
-        warm_task.cancel()
+    # Don't let a half-finished import or a sweep outlive the app.
+    for task in (warm_task, sweep_task):
+        if not task.done():
+            task.cancel()
     logger.info("Shutting down %s", settings.PROJECT_NAME)
 
 
@@ -91,18 +139,24 @@ def create_app() -> FastAPI:
 
     @app.middleware("http")
     async def request_context(request: Request, call_next):
-        req_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+        # Only believe an inbound request id when something trustworthy set
+        # it, and only if it is well-formed: the value lands in structured
+        # logs, where an unvalidated string can forge log entries.
+        inbound = request.headers.get("X-Request-ID") if settings.TRUSTED_PROXY_HEADERS else None
+        req_id = _safe_request_id(inbound)
         token = request_id_ctx.set(req_id)
         start = time.perf_counter()
-        route_path = request.url.path
         try:
             response = await call_next(request)
         except Exception:
-            REQUEST_COUNT.labels(request.method, route_path, "500").inc()
+            # `request.scope["route"]` is only populated once routing has run,
+            # which it has by the time an endpoint raises.
+            REQUEST_COUNT.labels(request.method, _metric_path(request), "500").inc()
             raise
         finally:
             request_id_ctx.reset(token)
         duration = time.perf_counter() - start
+        route_path = _metric_path(request)
         REQUEST_COUNT.labels(request.method, route_path, response.status_code).inc()
         REQUEST_LATENCY.labels(request.method, route_path).observe(duration)
         response.headers["X-Request-ID"] = req_id

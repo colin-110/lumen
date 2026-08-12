@@ -4,8 +4,9 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.config import settings
 from app.models.conversation import MessageRole
 
 
@@ -35,17 +36,21 @@ class ConversationDetail(ConversationRead):
 
 
 class ConversationCreate(BaseModel):
-    title: str | None = None
+    title: str | None = Field(None, max_length=255)
 
 
 class ChatRequest(BaseModel):
-    message: str
+    # Bounded because the question is concatenated with retrieved context to
+    # build the prompt: an unbounded question is an unbounded bill and a
+    # guaranteed context-window error, discovered at the provider instead of
+    # at the edge.
+    message: str = Field(..., min_length=1, max_length=settings.MAX_MESSAGE_CHARS)
     conversation_id: uuid.UUID | None = None
     # Pin the answer to specific documents (e.g. "does this invoice match this
     # contract?"). Retrieval is restricted to them and the context budget is
     # split fairly across them, so a long document can't crowd out a short one.
     # Omit to search everything, which stays the default.
-    document_ids: list[uuid.UUID] | None = None
+    document_ids: list[uuid.UUID] | None = Field(None, max_length=settings.MAX_PINNED_DOCUMENTS)
 
 
 class ChatSource(BaseModel):
