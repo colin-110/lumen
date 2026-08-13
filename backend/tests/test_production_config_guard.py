@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.core.config import INSECURE_SECRET_KEY, Settings
+from app.core.config import INSECURE_SECRET_KEY, INSECURE_SUPERUSER_PASSWORD, Settings
 
 SAFE = {
     "SECRET_KEY": "a" * 48,
@@ -28,7 +28,22 @@ def _settings(environment: str, **overrides) -> Settings:
 
 class TestLocalStaysPermissive:
     def test_local_boots_with_every_default(self):
-        s = Settings(ENVIRONMENT="local")
+        """Every insecure default present at once, and `local` still starts.
+
+        The values are passed explicitly rather than left to defaults: init
+        arguments outrank both the environment and the .env file in
+        pydantic-settings, so this asserts the same thing whether or not the
+        surrounding shell happens to export SECRET_KEY — which CI does.
+        """
+        s = Settings(
+            ENVIRONMENT="local",
+            SECRET_KEY=INSECURE_SECRET_KEY,
+            FIRST_SUPERUSER_PASSWORD=INSECURE_SUPERUSER_PASSWORD,
+            ALLOW_OPEN_REGISTRATION=True,
+            POSTGRES_PASSWORD="postgres",
+            S3_SECRET_KEY="minioadmin",
+            METRICS_TOKEN=None,
+        )
         assert s.SECRET_KEY == INSECURE_SECRET_KEY
         assert s.DEBUG is True
 
