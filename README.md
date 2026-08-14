@@ -225,9 +225,14 @@ checks. A default or under-32-character `SECRET_KEY` is **fatal** — it lets an
 for any account, so there is no configuration in which continuing to serve is better than
 stopping. The rest (seeded superuser password, open registration, the Postgres and MinIO
 defaults, an unguarded `/metrics`) print a startup warning and become fatal under
-`STRICT_PRODUCTION_CHECKS=true`, which is the recommended setting once you have reviewed a
-deployment's configuration. It is off by default deliberately: a check added in one release must
-not turn the next upgrade into an outage.
+`STRICT_PRODUCTION_CHECKS=true`. It is off by default deliberately: a check added in one release
+must not turn the next upgrade into an outage.
+
+Turn strict mode on for a deployment holding real data. **Do not turn it on for a public demo**
+that wants `ALLOW_OPEN_REGISTRATION=true` — strict mode makes open registration fatal, and a demo
+nobody can sign up for is not a demo. The warning in the log is the correct outcome there, not a
+defect: the setting is a deliberate choice, and the log says so out loud rather than letting it
+pass unnoticed on a deployment where it *would* be a mistake.
 
 A `Makefile` wraps the common commands: `make up`, `make down`, `make logs`, `make migrate`,
 `make seed`, `make test`, `make lint`, plus `make eval-retrieval` and `make eval-generation`
