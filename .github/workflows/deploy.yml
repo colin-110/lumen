@@ -23,7 +23,7 @@ jobs:
       github.event_name == 'workflow_dispatch' ||
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 50
 
     steps:
       - name: Configure AWS credentials
@@ -49,7 +49,7 @@ jobs:
             --instance-ids "${{ secrets.EC2_INSTANCE_ID }}" \
             --document-name "AWS-RunShellScript" \
             --comment "deploy ${GITHUB_SHA::7}" \
-            --timeout-seconds 1200 \
+            --timeout-seconds 2400 \
             --parameters 'commands=[
               "set -euo pipefail",
               "cd /home/ec2-user/lumen",
@@ -65,7 +65,11 @@ jobs:
         run: |
           set -euo pipefail
           CMD_ID="${{ steps.send.outputs.command_id }}"
-          for _ in $(seq 1 80); do
+          # 160 x 15s = 40 min. A t3.micro rebuilding the backend image
+          # (and pulling any changed base images) legitimately exceeds the
+          # old 20-minute window; timing out mid-deploy leaves the stack
+          # half-started, which is worse than waiting.
+          for _ in $(seq 1 160); do
             STATUS=$(aws ssm get-command-invocation \
               --command-id "$CMD_ID" \
               --instance-id "${{ secrets.EC2_INSTANCE_ID }}" \
