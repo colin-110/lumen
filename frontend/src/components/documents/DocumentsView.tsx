@@ -3,6 +3,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, File, Trash2 } from "lucide-react";
 import * as api from "@/lib/api-client";
+import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/lib/toast-context";
 import { useDocumentUploads } from "@/lib/use-document-uploads";
 import { UploadDropzone } from "./UploadDropzone";
@@ -18,6 +19,7 @@ function formatBytes(bytes: number): string {
 export function DocumentsView() {
   const queryClient = useQueryClient();
   const { push } = useToast();
+  const { user } = useAuth();
   const { uploads, handleFiles } = useDocumentUploads();
 
   const { data: documents = [], isLoading } = useQuery({
@@ -114,13 +116,19 @@ export function DocumentsView() {
                     )}
                   </div>
                   <StatusBadge status={doc.status} />
-                  <button
-                    onClick={() => handleDelete(doc)}
-                    className="p-2 rounded-lg text-muted-foreground hover:bg-danger-bg hover:text-danger transition-colors shrink-0"
-                    aria-label={`Delete ${doc.filename}`}
-                  >
-                    <Trash2 size={15} />
-                  </button>
+                  {/* The list is scoped to the organization, so it can include
+                      a colleague's uploads. Only the owner may delete one —
+                      the API enforces it with a 403; hiding the control here
+                      keeps the UI from offering an action that always fails. */}
+                  {doc.owner_id === user?.id && (
+                    <button
+                      onClick={() => handleDelete(doc)}
+                      className="p-2 rounded-lg text-muted-foreground hover:bg-danger-bg hover:text-danger transition-colors shrink-0"
+                      aria-label={`Delete ${doc.filename}`}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  )}
                 </div>
               ))}
             </div>

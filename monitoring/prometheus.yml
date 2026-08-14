@@ -7,3 +7,15 @@ scrape_configs:
     metrics_path: /metrics
     static_configs:
       - targets: ["backend:8000"]
+    # /metrics is mounted outside FastAPI's dependency system, so it is
+    # guarded by a bearer token in the app itself (see
+    # app/api/v1/endpoints/metrics.py). Unset METRICS_TOKEN leaves the
+    # endpoint open, which is fine on the private compose network and is
+    # rejected at startup for staging/production.
+    #
+    # When METRICS_TOKEN is set, write it to monitoring/metrics_token and
+    # uncomment the line below — Prometheus reads the file at scrape time, so
+    # the secret never lands in this file or in the image.
+    # authorization:
+    #   type: Bearer
+    #   credentials_file: /etc/prometheus/metrics_token

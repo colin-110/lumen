@@ -66,6 +66,15 @@ services:
         limits:
           memory: 820m
 
+  # Runs before the backend and exits, so it never counts against the
+  # steady-state footprint — but it still has to fit alongside the datastores
+  # while it runs. Alembic only imports the models and opens one connection.
+  migrate:
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
   db:
     deploy:
       resources:

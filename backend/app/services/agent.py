@@ -216,6 +216,38 @@ async def _rewrite_query(query: str, history: list[ChatMessage]) -> str:
         return query
 
 
+def _history_within_budget(history: list[ChatMessage]) -> list[ChatMessage]:
+    """Trim history to the most recent turns that fit the character budget.
+
+    MAX_HISTORY_MESSAGES caps the number of turns, which says nothing about
+    their size: twenty messages can be twenty words or twenty thousand. Since
+    the retrieved context is appended on top of all of them, an unbounded
+    history is an unbounded prompt — and the failure arrives as a provider
+    context-window error rather than anything this system can act on.
+
+    Trims from the oldest end, so the turns nearest the question survive.
+    """
+    recent = history[-settings.MAX_HISTORY_MESSAGES :]
+
+    kept: list[ChatMessage] = []
+    used = 0
+    for message in reversed(recent):
+        cost = len(message.content)
+        if kept and used + cost > settings.MAX_HISTORY_CHARS:
+            break
+        kept.append(message)
+        used += cost
+    kept.reverse()
+
+    if len(kept) < len(recent):
+        logger.debug(
+            "Trimmed conversation history from %d to %d messages to fit the prompt budget",
+            len(recent),
+            len(kept),
+        )
+    return kept
+
+
 async def run(
     query: str,
     history: list[ChatMessage],
@@ -271,7 +303,7 @@ async def run(
         context += f"\n\nWeb search results (no internal documents matched):\n{web_block}"
 
     messages = [{"role": "system", "content": _system_prompt_for(sources)}]
-    for m in history[-settings.MAX_HISTORY_MESSAGES :]:
+    for m in _history_within_budget(history):
         messages.append({"role": m.role, "content": m.content})
     messages.append({"role": "user", "content": f"CONTEXT:\n{context}\n\nQUESTION:\n{query}"})
 

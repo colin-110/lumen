@@ -1,13 +1,13 @@
 services:
   db:
-    image: postgres:15
+    image: postgres:15.10
     container_name: enterprise_ai_db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-enterprise_ai}
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -21,7 +21,7 @@ services:
           memory: 512m
 
   redis:
-    image: redis:7
+    image: redis:7.4.1
     container_name: enterprise_ai_redis
     # Host port remapped to 6380 to avoid clashing with a Redis instance
     # that might already be running on the host; containers still talk to
@@ -29,7 +29,7 @@ services:
     # Also doubles as the Celery broker/result backend (DB 1) — no
     # separate message broker service needed.
     ports:
-      - "6380:6379"
+      - "127.0.0.1:6380:6379"
     volumes:
       - redis_data:/data
     healthcheck:
@@ -43,11 +43,11 @@ services:
           memory: 256m
 
   qdrant:
-    image: qdrant/qdrant:latest
+    image: qdrant/qdrant:v1.12.4
     container_name: enterprise_ai_qdrant
     ports:
-      - "6333:6333"
-      - "6334:6334"
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
     deploy:
@@ -56,7 +56,7 @@ services:
           memory: 512m
 
   minio:
-    image: minio/minio:latest
+    image: minio/minio:RELEASE.2024-11-07T00-52-20Z
     container_name: enterprise_ai_minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
@@ -64,8 +64,8 @@ services:
     command: server /data --console-address ":9001"
     # Host ports remapped (9005/9006) for the same reason as redis above.
     ports:
-      - "9005:9000"
-      - "9006:9001"
+      - "127.0.0.1:9005:9000"
+      - "127.0.0.1:9006:9001"
     volumes:
       - minio_data:/data
     healthcheck:
@@ -77,6 +77,31 @@ services:
       resources:
         limits:
           memory: 256m
+
+  # Runs `alembic upgrade head` once and exits. The backend waits on it
+  # completing successfully, so `docker compose up` on a fresh checkout gives
+  # a working stack — previously migrations existed only in `make migrate`
+  # (host-side, needs a local Poetry install) and in scripts/deploy.sh, so a
+  # plain `docker compose up` booted the API against an empty database and
+  # every request 500'd until you knew to run a second, undocumented command.
+  migrate:
+    build: ./backend
+    image: lumen-backend:latest
+    container_name: enterprise_ai_migrate
+    command: ["alembic", "upgrade", "head"]
+    env_file:
+      - backend/.env
+    environment:
+      - ENVIRONMENT=${ENVIRONMENT:-local}
+      - POSTGRES_SERVER=db
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+    deploy:
+      resources:
+        limits:
+          memory: 512m
 
   backend:
     build: ./backend
@@ -100,6 +125,8 @@ services:
       # this (and add more CPU) for real production traffic.
       - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -138,6 +165,8 @@ services:
       - QDRANT_URL=http://qdrant:6333
       - S3_ENDPOINT_URL=http://minio:9000
     depends_on:
+      migrate:
+        condition: service_completed_successfully
       db:
         condition: service_healthy
       redis:
@@ -175,13 +204,13 @@ services:
           memory: 200m
 
   prometheus:
-    image: prom/prometheus:latest
+    image: prom/prometheus:v3.0.1
     container_name: enterprise_ai_prometheus
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
     depends_on:
       - backend
     deploy:
@@ -193,7 +222,7 @@ services:
     # grafana-oss excludes the bundled enterprise plugins/features this
     # project never uses — meaningfully smaller image for the same
     # dashboards, since only Prometheus is wired up as a datasource here.
-    image: grafana/grafana-oss:latest
+    image: grafana/grafana-oss:11.4.0
     container_name: enterprise_ai_grafana
     environment:
       - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
@@ -204,7 +233,7 @@ services:
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
       - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
-      - "3001:3000"
+      - "127.0.0.1:3001:3000"
     depends_on:
       - prometheus
     deploy:

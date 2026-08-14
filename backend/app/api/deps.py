@@ -49,6 +49,13 @@ async def get_current_user(
     user = await crud_user.get(db, id=user_id)
     if not user:
         raise credentials_exception
+
+    # A JWT is valid until it expires no matter what happened to the account
+    # afterwards. `token_version` is the escape hatch: bumping it on the user
+    # row invalidates every token already issued for them.
+    if token_data.ver != user.token_version:
+        raise credentials_exception
+
     return user
 
 
@@ -58,7 +65,14 @@ async def get_current_active_user(current_user: User = Depends(get_current_user)
     return current_user
 
 
-async def get_current_active_superuser(current_user: User = Depends(get_current_user)) -> User:
+async def get_current_active_superuser(
+    # Chains off get_current_active_user, not get_current_user: depending on
+    # the latter meant a deactivated superuser still passed this check and
+    # kept access to /debug/retrieval, which exposes system prompts and raw
+    # document text. Being a superuser is an *additional* requirement on top
+    # of being active, never a way around it.
+    current_user: User = Depends(get_current_active_user),
+) -> User:
     if not crud_user.is_superuser(current_user):
         raise HTTPException(status_code=403, detail="Insufficient privileges")
     return current_user

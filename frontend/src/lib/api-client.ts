@@ -115,9 +115,14 @@ async function tryRefresh(): Promise<boolean> {
       return false;
     }
   })();
-  const result = await refreshPromise;
-  refreshPromise = null;
-  return result;
+  try {
+    return await refreshPromise;
+  } finally {
+    // In a finally: if the refresh ever rejects rather than returning false,
+    // leaving the settled promise cached would make every later call reuse
+    // that same failure forever.
+    refreshPromise = null;
+  }
 }
 
 interface RequestOpts extends RequestInit {
@@ -310,20 +315,41 @@ export async function streamChat(
   handlers: StreamHandlers,
   signal?: AbortSignal
 ): Promise<void> {
-  const token = getAccessToken();
-  const res = await fetch(`${API_BASE}/chat/stream`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body: JSON.stringify({
-      message,
-      conversation_id: conversationId ?? null,
-      document_ids: handlers.documentIds?.length ? handlers.documentIds : null,
-    }),
-    signal,
+  const body = JSON.stringify({
+    message,
+    conversation_id: conversationId ?? null,
+    document_ids: handlers.documentIds?.length ? handlers.documentIds : null,
   });
+
+  // Deliberately a bare `fetch` rather than `apiFetch`: the response is a
+  // stream that must not be buffered or wrapped in a timeout. That meant it
+  // also missed apiFetch's refresh-on-401 path, so once the 60-minute access
+  // token expired chat was the one thing in the app that stopped working
+  // while everything else silently recovered. The retry is reproduced here.
+  const send = async (): Promise<Response> => {
+    const token = getAccessToken();
+    return fetch(`${API_BASE}/chat/stream`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body,
+      signal,
+    });
+  };
+
+  let res = await send();
+  if (res.status === 401) {
+    if (await tryRefresh()) {
+      res = await send();
+    } else {
+      clearTokens();
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("lumen:unauthorized"));
+      }
+    }
+  }
 
   if (!res.ok || !res.body) {
     throw new ApiError(res.status, await parseErrorDetail(res));

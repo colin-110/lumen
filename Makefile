@@ -1,33 +1,53 @@
-.PHONY: up down build logs migrate seed install-backend install-frontend setup test lint eval-retrieval eval-generation
+.PHONY: up down build logs migrate seed install-backend install-frontend setup test test-unit test-integration lint eval-retrieval eval-generation lock
 
+# docker compose (v2 plugin), not the standalone docker-compose (v1, EOL since
+# 2023 and absent from current Docker installs). scripts/deploy.sh already
+# used v2; these targets had drifted.
+COMPOSE := docker compose
+
+# `up` no longer needs a follow-up `make migrate`: the compose stack has a
+# one-shot `migrate` service that the backend and worker wait on.
 up:
-	docker-compose up -d
+	$(COMPOSE) up -d
 
 down:
-	docker-compose down
+	$(COMPOSE) down
 
 build:
-	docker-compose build
+	$(COMPOSE) build
 
 logs:
-	docker-compose logs -f backend worker
+	$(COMPOSE) logs -f backend worker
 
 install-backend:
 	cd backend && poetry install
 
 install-frontend:
-	cd frontend && npm install
+	cd frontend && npm ci
 
 setup:
 	cp .env.example backend/.env
 	echo "NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1" > frontend/.env.local
 	@echo "Setup complete! Please configure your backend/.env file with API keys."
 
+# Refresh poetry.lock after editing pyproject.toml. Run in the same Python
+# version the image uses, so the resolution matches what gets deployed.
+lock:
+	cd backend && poetry lock
+
 migrate:
-	cd backend && poetry run alembic upgrade head
+	$(COMPOSE) run --rm migrate
 
 seed:
-	cd backend && poetry run python scripts/seed.py
+	cd backend && poetry run python -m scripts.seed
+
+# Unit tests only — no services required.
+test-unit:
+	cd backend && poetry run pytest -m "not integration"
+
+# Integration tests: needs Postgres and Redis. `make up` provides both.
+test-integration:
+	cd backend && poetry run pytest -m integration
 
 test:
 	cd backend && poetry run pytest

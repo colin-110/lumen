@@ -3,7 +3,7 @@ from __future__ import annotations
 import uuid
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -22,6 +22,9 @@ class User(Base, TimestampMixin):
     full_name: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Bumped to invalidate every token already issued for this user. See the
+    # "ver" claim in core/security.py.
+    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organization.id", ondelete="SET NULL"), nullable=True
     )

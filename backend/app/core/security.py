@@ -43,6 +43,7 @@ def _create_token(
     subject: str | uuid.UUID,
     token_type: TokenType,
     expires_delta: timedelta,
+    token_version: int = 0,
     extra_claims: dict[str, Any] | None = None,
 ) -> str:
     now = datetime.now(timezone.utc)
@@ -52,25 +53,35 @@ def _create_token(
         "iat": now,
         "exp": now + expires_delta,
         "jti": str(uuid.uuid4()),
+        # Stamped from User.token_version and re-checked on every request.
+        # A JWT is otherwise valid until it expires no matter what happens to
+        # the account behind it: deactivating a user or changing their
+        # password left every issued token working for up to 14 days. Bumping
+        # the user's version invalidates all of them at once, which is the
+        # only revocation this design can offer without a per-request
+        # denylist lookup.
+        "ver": token_version,
     }
     if extra_claims:
         payload.update(extra_claims)
     return jwt.encode(payload, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def create_access_token(subject: str | uuid.UUID) -> str:
+def create_access_token(subject: str | uuid.UUID, token_version: int = 0) -> str:
     return _create_token(
         subject,
         TokenType.ACCESS,
         timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
+        token_version=token_version,
     )
 
 
-def create_refresh_token(subject: str | uuid.UUID) -> str:
+def create_refresh_token(subject: str | uuid.UUID, token_version: int = 0) -> str:
     return _create_token(
         subject,
         TokenType.REFRESH,
         timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS),
+        token_version=token_version,
     )
 
 
