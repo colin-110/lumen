@@ -110,9 +110,11 @@ jobs:
           BYTES=$(docker image inspect lumen-backend:ci --format '{{.Size}}')
           MB=$((BYTES / 1024 / 1024))
           echo "backend image: ${MB} MB"
-          # Was 916MB before the slimming pass. This ceiling is deliberately
-          # just above the current size so growth has to be justified.
-          LIMIT=900
+          # 916MB before the slimming pass, 750MB after (787MB as `docker
+          # images` reports it on the deploy host, which counts layers
+          # differently). The ceiling sits just above the measured size so
+          # that growth has to be justified rather than drifting unnoticed.
+          LIMIT=800
           if [ "$MB" -gt "$LIMIT" ]; then
             echo "::error::image grew to ${MB}MB, over the ${LIMIT}MB budget"
             exit 1
