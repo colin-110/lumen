@@ -8,6 +8,7 @@ alike.
 from __future__ import annotations
 
 import json
+import sys
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
@@ -53,9 +54,13 @@ class Settings(BaseSettings):
     FIRST_ORG_NAME: str = "Acme Corp"
 
     # Scrape guard for /metrics. Unset means the endpoint is open, which is
-    # only acceptable on a private network — enforced below for non-local
-    # environments.
+    # only acceptable on a private network.
     METRICS_TOKEN: str | None = None
+
+    # Promote every configuration warning to a startup failure. Off by
+    # default so that adding a new check cannot turn an upgrade into an
+    # outage; turn it on once a deployment's configuration has been reviewed.
+    STRICT_PRODUCTION_CHECKS: bool = False
 
     # Auth endpoints are unauthenticated by definition, so they are limited by
     # client IP rather than by user id.
@@ -271,48 +276,80 @@ class Settings(BaseSettings):
     MAX_HISTORY_CHARS: int = 24000
 
     @model_validator(mode="after")
-    def _reject_insecure_production_defaults(self) -> Settings:
-        """Refuse to boot with development credentials outside `local`.
+    def _check_production_credentials(self) -> Settings:
+        """Guard development credentials outside `local`.
 
         Every one of these has a safe-looking default so that `pytest`, a
         fresh clone and `make setup` all work with no configuration. That
         convenience is exactly what makes them dangerous the moment the same
         file is deployed: nothing else in the system would ever notice that
         the JWT signing key is the one published in .env.example.
+
+        Two severities, deliberately:
+
+        *Fatal* is reserved for the signing key. A published or short
+        SECRET_KEY means anyone can mint a token for any user including a
+        superuser, so there is no configuration in which continuing to serve
+        is better than stopping.
+
+        Everything else *warns*. Those are real problems, but an operator can
+        have compensating controls (a private subnet, a security group, a
+        reverse proxy) and — more to the point — a check added in one release
+        must not brick a deployment that was running fine in the last one.
+        METRICS_TOKEN is the clearest case: it did not exist before this
+        change, so no existing .env can possibly satisfy it, and hard-failing
+        on it would turn an upgrade into an outage.
+
+        Set STRICT_PRODUCTION_CHECKS=true to promote every warning to fatal.
+        That is the recommended setting once a deployment's configuration has
+        actually been reviewed.
         """
         if self.ENVIRONMENT == "local":
             return self
 
-        problems: list[str] = []
+        fatal: list[str] = []
         if self.SECRET_KEY == INSECURE_SECRET_KEY:
-            problems.append(
-                "SECRET_KEY is still the published development value — anyone can forge a JWT. "
-                'Generate one with: python -c "import secrets; print(secrets.token_urlsafe(48))"'
+            fatal.append(
+                "SECRET_KEY is still the published development value — anyone can forge a JWT for "
+                'any account. Generate one with: python -c "import secrets; '
+                'print(secrets.token_urlsafe(48))"'
             )
-        if len(self.SECRET_KEY) < 32:
-            problems.append("SECRET_KEY must be at least 32 characters")
+        elif len(self.SECRET_KEY) < 32:
+            fatal.append("SECRET_KEY must be at least 32 characters")
+
+        warnings_: list[str] = []
         if self.FIRST_SUPERUSER_PASSWORD == INSECURE_SUPERUSER_PASSWORD:
-            problems.append("FIRST_SUPERUSER_PASSWORD is still the published development value")
+            warnings_.append("FIRST_SUPERUSER_PASSWORD is still the published development value")
         if self.ALLOW_OPEN_REGISTRATION:
-            problems.append(
+            warnings_.append(
                 "ALLOW_OPEN_REGISTRATION=true lets anyone create an account (and an organization) "
                 "on a public deployment; set it to false and provision users deliberately"
             )
         if self.POSTGRES_PASSWORD == "postgres":
-            problems.append("POSTGRES_PASSWORD is still the default")
+            warnings_.append("POSTGRES_PASSWORD is still the default")
         if self.S3_SECRET_KEY == "minioadmin":
-            problems.append("S3_SECRET_KEY is still the MinIO default")
+            warnings_.append("S3_SECRET_KEY is still the MinIO default")
         if not self.METRICS_TOKEN:
-            problems.append(
+            warnings_.append(
                 "METRICS_TOKEN is unset, which leaves /metrics publicly scrapable; set a random "
                 "value and pass it to Prometheus as a bearer token"
             )
 
-        if problems:
+        if self.STRICT_PRODUCTION_CHECKS:
+            fatal.extend(warnings_)
+            warnings_ = []
+
+        if fatal:
             raise ValueError(
-                f"Refusing to start with ENVIRONMENT={self.ENVIRONMENT} and insecure defaults:\n  - "
-                + "\n  - ".join(problems)
+                f"Refusing to start with ENVIRONMENT={self.ENVIRONMENT}:\n  - "
+                + "\n  - ".join(fatal)
             )
+
+        # Printed rather than logged: logging is configured after settings are
+        # constructed, so a logger call here would go nowhere.
+        for problem in warnings_:
+            print(f"WARNING [config] {problem}", file=sys.stderr)  # noqa: T201
+
         return self
 
     @computed_field

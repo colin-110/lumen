@@ -220,10 +220,14 @@ document, and ask it a question.
 Everything except the app and the API binds to `127.0.0.1` — the datastores are reachable from
 the host for debugging but not from the network.
 
-**Going past local.** Setting `ENVIRONMENT` to `staging` or `production` makes the app refuse to
-start while any development credential is still in place — the signing key, the seeded superuser
-password, open registration, the Postgres and MinIO defaults, and an unguarded `/metrics`. It
-reports all of them at once rather than one restart at a time.
+**Going past local.** Setting `ENVIRONMENT` to `staging` or `production` turns on credential
+checks. A default or under-32-character `SECRET_KEY` is **fatal** — it lets anyone forge a token
+for any account, so there is no configuration in which continuing to serve is better than
+stopping. The rest (seeded superuser password, open registration, the Postgres and MinIO
+defaults, an unguarded `/metrics`) print a startup warning and become fatal under
+`STRICT_PRODUCTION_CHECKS=true`, which is the recommended setting once you have reviewed a
+deployment's configuration. It is off by default deliberately: a check added in one release must
+not turn the next upgrade into an outage.
 
 A `Makefile` wraps the common commands: `make up`, `make down`, `make logs`, `make migrate`,
 `make seed`, `make test`, `make lint`, plus `make eval-retrieval` and `make eval-generation`
@@ -549,7 +553,7 @@ silently rather than padding a count with render smoke tests.
 | Unit — retrieval | 33 | Fair multi-document allocation, score-floor selection, structure-aware chunking, and that splitting never alters the text it splits |
 | Unit — evaluation | 13 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
 | Unit — prompt budget | 9 | History is bounded by characters and not just turn count; request fields are bounded at the edge |
-| Config — production guard | 11 | The app refuses to boot on any development credential outside `local`, and reports all of them at once |
+| Config — production guard | 19 | A default signing key is always fatal; the remaining credential checks warn by default and become fatal under strict mode, so adding a check can't brick a running deployment |
 | Observability | 11 | Metric labels are route templates (not per-UUID series), request ids can't forge log lines, `/metrics` honours its token |
 | Security — tenant isolation | 10 | The Qdrant filter always carries a tenant condition, and caller-supplied `document_ids` narrows it rather than replacing it |
 | Integration — API | 31 | Against a real Postgres: organizations resolve to one tenant, documents are org-visible and owner-deletable, streamed replies persist without leaking connections, sidebar order follows activity, revoked tokens stop working |
