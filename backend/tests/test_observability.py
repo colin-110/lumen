@@ -74,6 +74,22 @@ class TestMetricLabelCardinality:
 
 
 class TestMetricsEndpointGuard:
+    async def test_metrics_is_served_without_a_redirect(self, monkeypatch):
+        """It used to be a mounted sub-app, which 307s /metrics -> /metrics/.
+        Behind this project's Caddy config the redirected path routed to the
+        frontend, so the deployed instance could not be scraped at all."""
+        import httpx
+
+        from app.core.config import settings
+        from app.main import app
+
+        monkeypatch.setattr(settings, "METRICS_TOKEN", None, raising=False)
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
+            res = await ac.get("/metrics")
+        assert res.status_code == 200, "no redirect should be involved"
+        assert "http_requests_total" in res.text
+
     async def test_metrics_requires_the_token_when_one_is_configured(self, monkeypatch):
         import httpx
 
@@ -82,9 +98,7 @@ class TestMetricsEndpointGuard:
 
         monkeypatch.setattr(settings, "METRICS_TOKEN", "s3cret", raising=False)
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test", follow_redirects=True
-        ) as ac:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             assert (await ac.get("/metrics")).status_code == 401
             assert (
                 await ac.get("/metrics", headers={"Authorization": "Bearer wrong"})
@@ -100,7 +114,5 @@ class TestMetricsEndpointGuard:
 
         monkeypatch.setattr(settings, "METRICS_TOKEN", None, raising=False)
         transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(
-            transport=transport, base_url="http://test", follow_redirects=True
-        ) as ac:
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as ac:
             assert (await ac.get("/metrics")).status_code == 200

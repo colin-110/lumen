@@ -185,9 +185,12 @@ def create_app() -> FastAPI:
 
     app.include_router(api_router, prefix=settings.API_V1_STR)
 
-    from app.api.v1.endpoints.metrics import metrics_app
+    # A route at /metrics, not a mounted sub-app: mounting made Starlette
+    # 307-redirect to /metrics/ (at http://, since the app can't see the TLS
+    # termination), which the reverse proxy then routed to the frontend.
+    from app.api.v1.endpoints.metrics import router as metrics_router
 
-    app.mount("/metrics", metrics_app)
+    app.include_router(metrics_router, tags=["metrics"])
 
     @app.get("/health", tags=["health"])
     async def health_check():
