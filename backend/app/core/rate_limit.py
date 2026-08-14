@@ -69,14 +69,26 @@ async def enforce_rate_limit(key: str, limit_per_minute: int) -> None:
 def client_ip(request: Request) -> str:
     """Best-effort client address for limiting unauthenticated endpoints.
 
-    `X-Forwarded-For` is trusted only when TRUSTED_PROXY_HEADERS is on, because
-    the header is client-supplied: honouring it unconditionally lets an
-    attacker rotate a fake value per request and bypass the limit entirely.
-    Behind a load balancer or Caddy the flag is correct and the socket address
-    would otherwise be the proxy's, collapsing every user into one bucket.
+    `X-Forwarded-For` is trusted only when TRUSTED_PROXY_HEADERS is on,
+    because the header is client-supplied: honouring it unconditionally lets
+    an attacker rotate a fake value per request and bypass the limit
+    entirely. Behind a reverse proxy the flag is correct, and without it the
+    socket address is the proxy's — collapsing every user into a single
+    bucket, so one person hitting the limit locks out everybody.
+
+    The *rightmost* entry is used, not the leftmost. Proxies append: a
+    request arriving with a forged `X-Forwarded-For: 1.2.3.4` comes out of
+    Caddy as `1.2.3.4, <real client>`, so reading the left end reads the
+    attacker's own value and hands them an unlimited supply of buckets. The
+    last entry is the one the trusted proxy wrote itself.
+
+    This assumes exactly one trusted proxy in front, which is what this
+    project deploys (Caddy). Behind a chain, this needs to count hops.
     """
     if settings.TRUSTED_PROXY_HEADERS:
         forwarded = request.headers.get("X-Forwarded-For")
         if forwarded:
-            return forwarded.split(",")[0].strip()[:64]
+            hops = [h.strip() for h in forwarded.split(",") if h.strip()]
+            if hops:
+                return hops[-1][:64]
     return request.client.host if request.client else "unknown"
