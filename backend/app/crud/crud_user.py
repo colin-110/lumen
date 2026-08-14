@@ -35,12 +35,24 @@ class CRUDUser:
 
     async def update(self, db: AsyncSession, db_obj: User, obj_in: UserUpdate) -> User:
         update_data = obj_in.model_dump(exclude_unset=True)
+
+        # Changing the password or deactivating the account must also revoke
+        # the tokens already issued against it — otherwise both operations are
+        # cosmetic for up to the refresh token's 14-day lifetime.
+        revoke = False
         if "password" in update_data:
             password = update_data.pop("password")
             if password:
                 db_obj.hashed_password = get_password_hash(password)
+                revoke = True
+        if update_data.get("is_active") is False:
+            revoke = True
+
         for field, value in update_data.items():
             setattr(db_obj, field, value)
+        if revoke:
+            db_obj.token_version += 1
+
         db.add(db_obj)
         await db.commit()
         await db.refresh(db_obj)

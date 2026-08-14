@@ -38,11 +38,21 @@ class CRUDConversation:
         await db.refresh(db_obj)
         return db_obj
 
-    async def touch(self, db: AsyncSession, conversation: Conversation) -> None:
-        # Bump updated_at so the sidebar sorts most-recent-first.
+    async def touch(self, db: AsyncSession, conversation_id: uuid.UUID) -> None:
+        """Bump updated_at so the sidebar sorts most-recent-first.
+
+        `list_for_user` orders by `Conversation.updated_at`, but adding a
+        message only INSERTs into `message` — the conversation row is never
+        written, so `onupdate=func.now()` never fires. Without this call the
+        sidebar orders by when each conversation was *created*, and a chat you
+        have been using all afternoon sinks to the bottom.
+
+        Takes an id rather than an instance so it can be called from the SSE
+        generator, which runs after the request's ORM objects are out of scope.
+        """
         await db.execute(
             Conversation.__table__.update()
-            .where(Conversation.id == conversation.id)
+            .where(Conversation.id == conversation_id)
             .values(updated_at=func.now())
         )
         await db.commit()

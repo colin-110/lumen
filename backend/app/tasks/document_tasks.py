@@ -19,6 +19,15 @@ from app.services.storage import storage
 
 logger = logging.getLogger(__name__)
 
+# Failures that are a property of the file, not of the infrastructure. These
+# are recorded on the row and never retried; everything else (storage
+# timeouts, Qdrant hiccups, a database blip) falls through to Celery's retry.
+PERMANENT_ERRORS = (
+    UnsupportedDocumentError,
+    UnicodeDecodeError,
+    ValueError,
+)
+
 
 async def _process_document(document_id: str) -> None:
     async with AsyncSessionLocal() as db:
@@ -73,9 +82,16 @@ async def _process_document(document_id: str) -> None:
             await semantic_cache.invalidate(org_id, str(doc.owner_id))
             logger.info("Indexed %d chunks for document %s (%s)", chunk_count, document_id, doc.filename)
 
-        except UnsupportedDocumentError as exc:
+        except PERMANENT_ERRORS as exc:
+            # Nothing about retrying a corrupt file, an unsupported format or
+            # text we cannot decode will make it succeed. Retrying them burned
+            # four attempts and rewrote the same failure row four times, while
+            # occupying a worker slot that a real document could have used.
+            logger.info("Document %s failed permanently: %s", document_id, exc)
             await crud_document.update(
-                db, db_obj=doc, obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message=str(exc))
+                db,
+                db_obj=doc,
+                obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message=str(exc)[:1000]),
             )
         except Exception as exc:  # noqa: BLE001 - convert to a stored failure, not a task crash
             logger.error("Failed to process document %s: %s", document_id, exc, exc_info=True)

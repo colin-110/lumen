@@ -111,8 +111,11 @@ def split_text(
     for heading, body in sections:
         prefix = f"{heading}\n" if heading else ""
         # Reserve room for the prefix so a chunk plus its heading still lands
-        # near chunk_size instead of overshooting it.
-        budget = max(200, chunk_size - len(prefix))
+        # near chunk_size instead of overshooting it. The floor is
+        # proportional rather than a fixed 200, which silently ignored any
+        # chunk_size below 200 — a caller asking for 120-character chunks
+        # got 200-character ones with no indication why.
+        budget = max(chunk_size // 4, chunk_size - len(prefix))
         pieces = (
             _merge_with_overlap(_split_recursive(body, seps, budget), budget, chunk_overlap)
             if body
@@ -128,6 +131,17 @@ def split_text(
 
 
 def _split_recursive(text: str, separators: list[str], chunk_size: int) -> list[str]:
+    """Split into pieces of at most `chunk_size`, keeping every character.
+
+    Each piece carries the separator that followed it, so concatenating the
+    pieces reproduces the input exactly. `str.split` discards the separator,
+    and the previous version rejoined pieces with a single space — which for
+    the ". ", "? " and "! " separators meant the sentence-ending punctuation
+    was deleted from the stored chunk. A paragraph long enough to need
+    splitting reached the embedder, the reranker and the model as one
+    run-on sentence: "...about topic 1 Sentence number 2 says...". Measured
+    on a plain 11-sentence paragraph, 10 of the 11 periods were lost.
+    """
     if len(text) <= chunk_size:
         return [text] if text else []
 
@@ -141,6 +155,10 @@ def _split_recursive(text: str, separators: list[str], chunk_size: int) -> list[
         if not remaining_seps:
             return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
         return _split_recursive(text, remaining_seps, chunk_size)
+
+    # Reattach the separator to the part it followed. The final part had no
+    # trailing separator in the source, so it stays as-is.
+    parts = [p + sep for p in parts[:-1]] + [parts[-1]]
 
     results: list[str] = []
     for part in parts:
@@ -158,24 +176,33 @@ def _split_recursive(text: str, separators: list[str], chunk_size: int) -> list[
 def _merge_with_overlap(pieces: list[str], chunk_size: int, overlap: int) -> list[str]:
     """Greedily pack small pieces back together up to chunk_size, carrying
     a tail of `overlap` characters from one chunk into the next so context
-    isn't lost at a hard boundary."""
+    isn't lost at a hard boundary.
+
+    Pieces are concatenated with no joining character: each already carries
+    the separator it was split on, so the original text is reconstructed
+    verbatim rather than approximated with spaces.
+    """
     if not pieces:
         return []
 
     merged: list[str] = []
     current = ""
     for piece in pieces:
-        candidate = f"{current} {piece}".strip() if current else piece
-        if len(candidate) <= chunk_size:
+        candidate = current + piece
+        if len(candidate) <= chunk_size or not current:
             current = candidate
             continue
-        if current:
-            merged.append(current)
-        current = piece[:chunk_size] if len(piece) > chunk_size else piece
-        # carry overlap from the tail of the previous chunk
-        if merged and overlap > 0:
-            tail = merged[-1][-overlap:]
-            current = f"{tail} {current}".strip()
-    if current:
-        merged.append(current)
+
+        merged.append(current.strip())
+        # Carry an overlap tail from the chunk just emitted. This one *is* a
+        # synthetic join — the tail is duplicated context, not a continuation
+        # of the source — so a space between it and the new piece is correct.
+        if overlap > 0:
+            tail = merged[-1][-overlap:].strip()
+            current = f"{tail} {piece}" if tail else piece
+        else:
+            current = piece
+
+    if current.strip():
+        merged.append(current.strip())
     return merged

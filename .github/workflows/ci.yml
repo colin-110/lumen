@@ -9,20 +9,77 @@ on:
 jobs:
   backend-test:
     runs-on: ubuntu-latest
+
+    # Integration tests exercise the API against a real database and Redis.
+    # Without them the suite could only ever cover pure functions, which is
+    # how a broken SSE persistence path, an inactive-superuser hole and an
+    # organization model that never matched two users all reached main with a
+    # green build.
+    services:
+      postgres:
+        image: postgres:15.10
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: lumen_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:7.4.1
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      POSTGRES_SERVER: localhost
+      POSTGRES_PORT: 5432
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lumen_test
+      REDIS_URL: redis://localhost:6379/0
+      ENVIRONMENT: local
+      SECRET_KEY: ci-only-secret-key-not-used-anywhere-real
+      # Keep tests off the network: no LLM calls, no Qdrant.
+      SEMANTIC_CACHE_ENABLED: "false"
+      RATE_LIMIT_ENABLED: "false"
+
     steps:
       - uses: actions/checkout@v4
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+
       - name: Install Poetry
-        run: pip install poetry
+        run: pipx install poetry==1.8.5
+
+      # --no-update would be a no-op here; the point is to fail loudly if
+      # poetry.lock and pyproject.toml have drifted, rather than silently
+      # resolving something different from what gets deployed.
+      - name: Verify the lock file is current
+        run: cd backend && poetry check --lock
+
       - name: Install dependencies
-        run: cd backend && poetry install
+        run: cd backend && poetry install --no-interaction
+
       - name: Run Ruff Linting
         run: cd backend && poetry run ruff check .
+
+      - name: Run migrations
+        run: cd backend && poetry run alembic upgrade head
+
       - name: Run Pytest
-        run: cd backend && poetry run pytest
+        run: cd backend && poetry run pytest -q
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -34,10 +91,14 @@ jobs:
           # 22, not 20: jsdom + undici's CacheStorage throws on Node 20
           # under Vitest. Next.js 16 requires >=20.9, so 22 is in range.
           node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
       - name: Install dependencies
         run: cd frontend && npm ci
       - name: Run Linting
         run: cd frontend && npm run lint
+      - name: Typecheck
+        run: cd frontend && npx tsc --noEmit
       - name: Run Vitest
         run: cd frontend && npm test
       - name: Build Next.js

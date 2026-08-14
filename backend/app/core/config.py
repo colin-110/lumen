@@ -8,11 +8,17 @@ alike.
 from __future__ import annotations
 
 import json
+import sys
 from functools import lru_cache
 from typing import Annotated, Any, Literal
 
-from pydantic import PostgresDsn, RedisDsn, computed_field, field_validator
+from pydantic import PostgresDsn, RedisDsn, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+INSECURE_SECRET_KEY = "dev-only-insecure-key-change-me"
+# Shipped in .env.example; if it survives into a real deployment it is a
+# default credential, not a configuration choice.
+INSECURE_SUPERUSER_PASSWORD = "admin12345"
 
 
 class Settings(BaseSettings):
@@ -37,15 +43,29 @@ class Settings(BaseSettings):
         return self.ENVIRONMENT == "local"
 
     # ------------------------------------------------------------- security
-    SECRET_KEY: str = "dev-only-insecure-key-change-me"
+    SECRET_KEY: str = INSECURE_SECRET_KEY
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 60
     REFRESH_TOKEN_EXPIRE_DAYS: int = 14
     # Registration is open in local dev; lock it down elsewhere.
     ALLOW_OPEN_REGISTRATION: bool = True
     FIRST_SUPERUSER_EMAIL: str = "admin@enterprise.ai"
-    FIRST_SUPERUSER_PASSWORD: str = "admin12345"
+    FIRST_SUPERUSER_PASSWORD: str = INSECURE_SUPERUSER_PASSWORD
     FIRST_ORG_NAME: str = "Acme Corp"
+
+    # Scrape guard for /metrics. Unset means the endpoint is open, which is
+    # only acceptable on a private network.
+    METRICS_TOKEN: str | None = None
+
+    # Promote every configuration warning to a startup failure. Off by
+    # default so that adding a new check cannot turn an upgrade into an
+    # outage; turn it on once a deployment's configuration has been reviewed.
+    STRICT_PRODUCTION_CHECKS: bool = False
+
+    # Auth endpoints are unauthenticated by definition, so they are limited by
+    # client IP rather than by user id.
+    RATE_LIMIT_LOGIN_PER_MINUTE: int = 10
+    RATE_LIMIT_REGISTER_PER_MINUTE: int = 5
 
     # NoDecode: pydantic-settings would otherwise try to JSON-decode this env
     # var itself before our validator runs, and fail on a plain comma-separated
@@ -227,15 +247,110 @@ class Settings(BaseSettings):
     SEMANTIC_CACHE_ENABLED: bool = True
     SEMANTIC_CACHE_THRESHOLD: float = 0.97
     SEMANTIC_CACHE_TTL_SECONDS: int = 60 * 60 * 6
+    # How often the app sweeps expired cache entries out of Qdrant. The TTL
+    # is only a read filter; without this sweep nothing is ever deleted.
+    SEMANTIC_CACHE_SWEEP_SECONDS: int = 15 * 60
 
     # ------------------------------------------------------------ limiting
     RATE_LIMIT_ENABLED: bool = True
     RATE_LIMIT_CHAT_PER_MINUTE: int = 30
     RATE_LIMIT_UPLOAD_PER_MINUTE: int = 20
 
+    # Whether X-Forwarded-For/X-Request-ID may be believed. True only when
+    # something trustworthy (an ALB, Caddy, nginx) sets them; otherwise a
+    # client can forge both, which turns per-IP rate limiting into a no-op.
+    TRUSTED_PROXY_HEADERS: bool = False
+
     # ------------------------------------------------------ web search tool
     WEB_SEARCH_ENABLED: bool = False
     TAVILY_API_KEY: str | None = None
+
+    # ------------------------------------------------------- request limits
+    # A prompt is built from the question plus retrieved context, so an
+    # unbounded question is an unbounded bill and a guaranteed context-window
+    # error. Bound it at the edge instead of discovering it at the provider.
+    MAX_MESSAGE_CHARS: int = 8000
+    MAX_PINNED_DOCUMENTS: int = 20
+    # MAX_HISTORY_MESSAGES caps the number of turns; this caps their total
+    # size, which is what actually determines the prompt cost.
+    MAX_HISTORY_CHARS: int = 24000
+
+    @model_validator(mode="after")
+    def _check_production_credentials(self) -> Settings:
+        """Guard development credentials outside `local`.
+
+        Every one of these has a safe-looking default so that `pytest`, a
+        fresh clone and `make setup` all work with no configuration. That
+        convenience is exactly what makes them dangerous the moment the same
+        file is deployed: nothing else in the system would ever notice that
+        the JWT signing key is the one published in .env.example.
+
+        Two severities, deliberately:
+
+        *Fatal* is reserved for the signing key. A published or short
+        SECRET_KEY means anyone can mint a token for any user including a
+        superuser, so there is no configuration in which continuing to serve
+        is better than stopping.
+
+        Everything else *warns*. Those are real problems, but an operator can
+        have compensating controls (a private subnet, a security group, a
+        reverse proxy) and — more to the point — a check added in one release
+        must not brick a deployment that was running fine in the last one.
+        METRICS_TOKEN is the clearest case: it did not exist before this
+        change, so no existing .env can possibly satisfy it, and hard-failing
+        on it would turn an upgrade into an outage.
+
+        Set STRICT_PRODUCTION_CHECKS=true to promote every warning to fatal.
+        That is the recommended setting once a deployment's configuration has
+        actually been reviewed.
+        """
+        if self.ENVIRONMENT == "local":
+            return self
+
+        fatal: list[str] = []
+        if self.SECRET_KEY == INSECURE_SECRET_KEY:
+            fatal.append(
+                "SECRET_KEY is still the published development value — anyone can forge a JWT for "
+                'any account. Generate one with: python -c "import secrets; '
+                'print(secrets.token_urlsafe(48))"'
+            )
+        elif len(self.SECRET_KEY) < 32:
+            fatal.append("SECRET_KEY must be at least 32 characters")
+
+        warnings_: list[str] = []
+        if self.FIRST_SUPERUSER_PASSWORD == INSECURE_SUPERUSER_PASSWORD:
+            warnings_.append("FIRST_SUPERUSER_PASSWORD is still the published development value")
+        if self.ALLOW_OPEN_REGISTRATION:
+            warnings_.append(
+                "ALLOW_OPEN_REGISTRATION=true lets anyone create an account (and an organization) "
+                "on a public deployment; set it to false and provision users deliberately"
+            )
+        if self.POSTGRES_PASSWORD == "postgres":
+            warnings_.append("POSTGRES_PASSWORD is still the default")
+        if self.S3_SECRET_KEY == "minioadmin":
+            warnings_.append("S3_SECRET_KEY is still the MinIO default")
+        if not self.METRICS_TOKEN:
+            warnings_.append(
+                "METRICS_TOKEN is unset, which leaves /metrics publicly scrapable; set a random "
+                "value and pass it to Prometheus as a bearer token"
+            )
+
+        if self.STRICT_PRODUCTION_CHECKS:
+            fatal.extend(warnings_)
+            warnings_ = []
+
+        if fatal:
+            raise ValueError(
+                f"Refusing to start with ENVIRONMENT={self.ENVIRONMENT}:\n  - "
+                + "\n  - ".join(fatal)
+            )
+
+        # Printed rather than logged: logging is configured after settings are
+        # constructed, so a logger call here would go nowhere.
+        for problem in warnings_:
+            print(f"WARNING [config] {problem}", file=sys.stderr)  # noqa: T201
+
+        return self
 
     @computed_field
     @property
