@@ -75,7 +75,9 @@ def _clamp01(value: object) -> float:
         return 0.0
 
 
-async def judge_answer(question: str, expected_answer: str, context: str, answer: str) -> JudgeResult:
+async def judge_answer(
+    question: str, expected_answer: str, context: str, answer: str
+) -> JudgeResult:
     prompt = JUDGE_PROMPT.format(
         context=context or "(no context was retrieved)",
         question=question,

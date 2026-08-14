@@ -30,10 +30,16 @@ class CRUDDocument:
         return Document.owner_id == owner_id
 
     async def get_for_tenant(
-        self, db: AsyncSession, id: uuid.UUID, owner_id: uuid.UUID, organization_id: uuid.UUID | None
+        self,
+        db: AsyncSession,
+        id: uuid.UUID,
+        owner_id: uuid.UUID,
+        organization_id: uuid.UUID | None,
     ) -> Document | None:
         result = await db.execute(
-            select(Document).where(Document.id == id, self._tenant_clause(owner_id, organization_id))
+            select(Document).where(
+                Document.id == id, self._tenant_clause(owner_id, organization_id)
+            )
         )
         return result.scalars().first()
 

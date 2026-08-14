@@ -46,7 +46,9 @@ async def _load_conversation(
     )
     if not convo:
         raise HTTPException(status_code=404, detail="Conversation not found")
-    history = [agent_service.ChatMessage(role=m.role.value, content=m.content) for m in convo.messages]
+    history = [
+        agent_service.ChatMessage(role=m.role.value, content=m.content) for m in convo.messages
+    ]
     return convo, history
 
 
@@ -125,7 +127,13 @@ async def chat(
 
     full_text = "".join(text_parts)
     await crud_conversation.add_message(
-        db, convo.id, MessageRole.ASSISTANT, full_text, sources=sources, latency_ms=latency_ms, cached=cached
+        db,
+        convo.id,
+        MessageRole.ASSISTANT,
+        full_text,
+        sources=sources,
+        latency_ms=latency_ms,
+        cached=cached,
     )
     await crud_conversation.touch(db, convo.id)
 

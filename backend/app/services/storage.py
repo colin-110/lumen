@@ -30,7 +30,9 @@ class S3StorageService:
             aws_access_key_id=settings.S3_ACCESS_KEY,
             aws_secret_access_key=settings.S3_SECRET_KEY,
             region_name=settings.S3_REGION,
-            config=BotoConfig(signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}),
+            config=BotoConfig(
+                signature_version="s3v4", retries={"max_attempts": 3, "mode": "standard"}
+            ),
         )
 
     def _ensure_bucket_sync(self) -> None:
@@ -63,7 +65,9 @@ class S3StorageService:
     def _delete(self, object_name: str) -> None:
         self._client.delete_object(Bucket=self.bucket, Key=object_name)
 
-    async def upload_file(self, content: bytes, object_name: str, content_type: str | None = None) -> bool:
+    async def upload_file(
+        self, content: bytes, object_name: str, content_type: str | None = None
+    ) -> bool:
         try:
             await asyncio.to_thread(self._upload, content, object_name, content_type)
             return True

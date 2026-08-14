@@ -55,9 +55,7 @@ def stub_agent(monkeypatch):
 async def _read_stream(client, headers, message: str, conversation_id: str | None = None) -> str:
     body = {"message": message, "conversation_id": conversation_id}
     chunks: list[str] = []
-    async with client.stream(
-        "POST", "/api/v1/chat/stream", json=body, headers=headers
-    ) as response:
+    async with client.stream("POST", "/api/v1/chat/stream", json=body, headers=headers) as response:
         assert response.status_code == 200, await response.aread()
         async for piece in response.aiter_text():
             chunks.append(piece)
@@ -92,7 +90,9 @@ class TestStreamingPersistence:
         _, headers = await register_and_login(client, unique_email)
 
         await _read_stream(client, headers, "one")
-        conversation_id = (await client.get("/api/v1/conversations/", headers=headers)).json()[0]["id"]
+        conversation_id = (await client.get("/api/v1/conversations/", headers=headers)).json()[0][
+            "id"
+        ]
 
         stub_agent(tokens=("second",))
         await _read_stream(client, headers, "two", conversation_id=conversation_id)
@@ -102,9 +102,7 @@ class TestStreamingPersistence:
         ).json()
         assert [m["content"] for m in detail["messages"]] == ["one", "first", "two", "second"]
 
-    async def test_a_conversation_cannot_be_hijacked_by_id(
-        self, client, stub_agent, unique_email
-    ):
+    async def test_a_conversation_cannot_be_hijacked_by_id(self, client, stub_agent, unique_email):
         stub_agent()
         _, owner_headers = await register_and_login(client, unique_email)
         await _read_stream(client, owner_headers, "private question")
@@ -238,7 +236,10 @@ class TestRequestValidation:
         _, headers = await register_and_login(client, unique_email)
         res = await client.post(
             "/api/v1/chat/stream",
-            json={"message": "compare these", "document_ids": [str(_uuid.uuid4()) for _ in range(50)]},
+            json={
+                "message": "compare these",
+                "document_ids": [str(_uuid.uuid4()) for _ in range(50)],
+            },
             headers=headers,
         )
         assert res.status_code == 422

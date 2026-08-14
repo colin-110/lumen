@@ -66,7 +66,9 @@ def test_plain_rate_limit_is_distinct_from_quota_and_is_retryable():
 
 
 def test_openai_style_insufficient_quota_is_quota():
-    info = classify(RateLimitError("Error code: 429 - insufficient_quota: exceeded your current quota"))
+    info = classify(
+        RateLimitError("Error code: 429 - insufficient_quota: exceeded your current quota")
+    )
     assert info.kind is LLMErrorKind.QUOTA
 
 

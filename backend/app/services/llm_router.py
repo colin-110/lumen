@@ -55,7 +55,9 @@ def _build_model_list() -> list[dict]:
     if not deployments:
         # Always register something so failures are a clear "no API key" error
         # at call time rather than an empty-router crash at import time.
-        deployments.append({"model_name": MODEL_ALIAS, "litellm_params": {"model": settings.PRIMARY_MODEL}})
+        deployments.append(
+            {"model_name": MODEL_ALIAS, "litellm_params": {"model": settings.PRIMARY_MODEL}}
+        )
     return deployments
 
 

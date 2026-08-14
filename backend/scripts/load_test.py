@@ -19,7 +19,9 @@ import time
 import httpx
 
 # Point at a deployment with:  python scripts/load_test.py https://host user pass
-BASE = (sys.argv[1] if len(sys.argv) > 1 else os.getenv("LOAD_TEST_BASE", "http://localhost:8000")).rstrip("/")
+BASE = (
+    sys.argv[1] if len(sys.argv) > 1 else os.getenv("LOAD_TEST_BASE", "http://localhost:8000")
+).rstrip("/")
 EMAIL = sys.argv[2] if len(sys.argv) > 2 else "admin@enterprise.ai"
 PASSWORD = sys.argv[3] if len(sys.argv) > 3 else "admin12345"
 API = f"{BASE}/api/v1"
@@ -33,9 +35,13 @@ def summarize(name: str, latencies_ms: list[float], wall_seconds: float, errors:
     p99 = latencies_ms[int(n * 0.99) - 1] if n else 0
     rps = n / wall_seconds if wall_seconds > 0 else 0
     print(f"\n== {name} ==")
-    print(f"  requests: {n}  errors: {errors}  wall: {wall_seconds:.2f}s  throughput: {rps:.1f} req/s")
-    print(f"  latency (ms)  min={min(latencies_ms):.1f}  mean={statistics.mean(latencies_ms):.1f}  "
-          f"p50={p50:.1f}  p95={p95:.1f}  p99={p99:.1f}  max={max(latencies_ms):.1f}")
+    print(
+        f"  requests: {n}  errors: {errors}  wall: {wall_seconds:.2f}s  throughput: {rps:.1f} req/s"
+    )
+    print(
+        f"  latency (ms)  min={min(latencies_ms):.1f}  mean={statistics.mean(latencies_ms):.1f}  "
+        f"p50={p50:.1f}  p95={p95:.1f}  p99={p99:.1f}  max={max(latencies_ms):.1f}"
+    )
 
 
 async def hit(client: httpx.AsyncClient, method: str, path: str, **kw) -> tuple[float, bool]:
@@ -48,7 +54,9 @@ async def hit(client: httpx.AsyncClient, method: str, path: str, **kw) -> tuple[
     return (time.perf_counter() - start) * 1000, ok
 
 
-async def run_concurrent(client: httpx.AsyncClient, name: str, n: int, concurrency: int, method: str, path: str, **kw):
+async def run_concurrent(
+    client: httpx.AsyncClient, name: str, n: int, concurrency: int, method: str, path: str, **kw
+):
     sem = asyncio.Semaphore(concurrency)
 
     async def bound():
@@ -66,7 +74,9 @@ async def run_concurrent(client: httpx.AsyncClient, name: str, n: int, concurren
 async def main() -> None:
     async with httpx.AsyncClient(base_url=BASE, timeout=30) as anon:
         # 1. Raw framework throughput ceiling (no DB, no auth).
-        await run_concurrent(anon, "GET /health (100 requests, concurrency 50)", 100, 50, "GET", "/health")
+        await run_concurrent(
+            anon, "GET /health (100 requests, concurrency 50)", 100, 50, "GET", "/health"
+        )
 
     async with httpx.AsyncClient(base_url=BASE, timeout=30) as client:
         # Log in once, reuse the token for every authenticated request below.
@@ -80,7 +90,12 @@ async def main() -> None:
 
         # 2. Authenticated, DB-backed read under load.
         await run_concurrent(
-            client, "GET /api/v1/documents/ (200 requests, concurrency 20)", 200, 20, "GET", "/documents/"
+            client,
+            "GET /api/v1/documents/ (200 requests, concurrency 20)",
+            200,
+            20,
+            "GET",
+            "/documents/",
         )
 
         # 3. Retrieval under concurrency. This is the interesting one for a RAG
@@ -90,7 +105,10 @@ async def main() -> None:
         await run_concurrent(
             client,
             "POST /debug/retrieval (60 requests, concurrency 10) - full hybrid+rerank",
-            60, 10, "POST", f"{API}/debug/retrieval",
+            60,
+            10,
+            "POST",
+            f"{API}/debug/retrieval",
             json={"message": "What are the payment terms and the overage rate?"},
         )
 
@@ -107,8 +125,10 @@ async def main() -> None:
 
         print("\n== Semantic cache impact (same question, back-to-back) ==")
         print(f"  cold (cache miss): {miss_ms:.0f}ms  status={r1.status_code}")
-        print(f"  warm (cache hit):  {hit_ms:.0f}ms  status={r2.status_code}"
-              f"  cached={r2.json().get('cached') if r2.status_code == 200 else 'n/a'}")
+        print(
+            f"  warm (cache hit):  {hit_ms:.0f}ms  status={r2.status_code}"
+            f"  cached={r2.json().get('cached') if r2.status_code == 200 else 'n/a'}"
+        )
         if miss_ms > 0 and hit_ms > 0:
             print(f"  speedup: {miss_ms / hit_ms:.1f}x")
 

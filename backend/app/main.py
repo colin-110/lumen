@@ -21,9 +21,7 @@ from app.services.qdrant_client import init_qdrant
 configure_logging()
 logger = logging.getLogger(__name__)
 
-REQUEST_COUNT = Counter(
-    "http_requests_total", "Total HTTP requests", ["method", "path", "status"]
-)
+REQUEST_COUNT = Counter("http_requests_total", "Total HTTP requests", ["method", "path", "status"])
 REQUEST_LATENCY = Histogram(
     "http_request_duration_seconds", "HTTP request latency", ["method", "path"]
 )
@@ -68,7 +66,9 @@ async def lifespan(app: FastAPI):
     try:
         init_qdrant()
     except Exception:
-        logger.error("Qdrant initialization failed; retrieval will error until it recovers", exc_info=True)
+        logger.error(
+            "Qdrant initialization failed; retrieval will error until it recovers", exc_info=True
+        )
 
     from app.services.storage import storage
 

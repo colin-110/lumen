@@ -56,7 +56,7 @@ def extract_text(file_path: str, filename: str) -> str:
 def _looks_binary(file_path: str, sample_bytes: int = 8192) -> bool:
     """A NUL byte in the first few KB is the standard heuristic, and the one
     `file(1)` and git both use. Text formats do not contain them."""
-    with open(file_path, "rb") as f:
+    with Path(file_path).open("rb") as f:
         return b"\x00" in f.read(sample_bytes)
 
 

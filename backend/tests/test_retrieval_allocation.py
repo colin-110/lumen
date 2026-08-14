@@ -120,8 +120,6 @@ class TestScoreFloorNeverStarvesTheContext:
         from app.services.retrieval import select_within_floor as apply_floor
 
         # Plenty above the floor: the floor should do its job and trim the rest.
-        ranked = [chunk(f"d{i}", 0, 5.0 - i * 0.1) for i in range(6)] + [
-            chunk("junk", 0, -11.0)
-        ]
+        ranked = [chunk(f"d{i}", 0, 5.0 - i * 0.1) for i in range(6)] + [chunk("junk", 0, -11.0)]
         kept = apply_floor(ranked)
         assert all(c.document_id != "junk" for c in kept)

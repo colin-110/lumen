@@ -109,18 +109,24 @@ def _print_report(results: list[CaseResult]) -> None:
     print(f"Faithfulness:        {avg_faithfulness:.2f}")
     print(f"Answer relevancy:    {avg_relevancy:.2f}")
     print(f"Answer correctness:  {avg_correctness:.2f}")
-    print(f"Hallucination rate:  {hallucination_rate:.1%}  ({len(hallucinated)}/{n} answers had an unsupported claim)")
+    print(
+        f"Hallucination rate:  {hallucination_rate:.1%}  ({len(hallucinated)}/{n} answers had an unsupported claim)"
+    )
     print(f"Avg latency:         {avg_latency:.0f}ms\n")
 
     if hallucinated:
         print("Answers with unsupported claims:")
         for r in hallucinated:
-            claims = "; ".join(r.unsupported_claims) or "(judge flagged it but listed no specific claim)"
-            print(f"  - [{r.faithfulness:.2f}] \"{r.question}\" -> {claims}")
+            claims = (
+                "; ".join(r.unsupported_claims) or "(judge flagged it but listed no specific claim)"
+            )
+            print(f'  - [{r.faithfulness:.2f}] "{r.question}" -> {claims}')
         print()
 
 
-async def main(keep_fixtures: bool = False, sample_size: int = DEFAULT_SAMPLE_SIZE) -> list[CaseResult]:
+async def main(
+    keep_fixtures: bool = False, sample_size: int = DEFAULT_SAMPLE_SIZE
+) -> list[CaseResult]:
     logger.info("Ingesting %d golden documents into the eval namespace...", len(DOCUMENTS))
     await ingest_fixtures()
 
@@ -147,13 +153,18 @@ async def main(keep_fixtures: bool = False, sample_size: int = DEFAULT_SAMPLE_SI
                 results.append(await _run_case(q, org_str, owner_str))
                 last_exc = None
                 break
-            except Exception as exc:  # noqa: BLE001 - any provider failure is retryable here
+            except Exception as exc:
                 last_exc = exc
         if last_exc is not None:
             # Every retry exhausted — a single provider outage shouldn't discard
             # every question that already succeeded; skip and keep going.
             skipped += 1
-            logger.warning("Skipping %r after %d attempts: %s", q.question, len(RETRY_DELAYS_SECONDS) + 1, last_exc)
+            logger.warning(
+                "Skipping %r after %d attempts: %s",
+                q.question,
+                len(RETRY_DELAYS_SECONDS) + 1,
+                last_exc,
+            )
 
     if not results:
         print("\nEvery question failed — no report to generate. Check LLM provider connectivity.")

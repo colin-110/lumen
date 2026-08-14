@@ -27,8 +27,8 @@ class Conversation(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
     )
 
-    user: Mapped["User"] = relationship(back_populates="conversations")
-    messages: Mapped[list["Message"]] = relationship(
+    user: Mapped[User] = relationship(back_populates="conversations")
+    messages: Mapped[list[Message]] = relationship(
         back_populates="conversation",
         cascade="all, delete-orphan",
         order_by="Message.created_at",
@@ -50,4 +50,4 @@ class Message(Base, TimestampMixin):
     latency_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     cached: Mapped[bool] = mapped_column(default=False, nullable=False)
 
-    conversation: Mapped["Conversation"] = relationship(back_populates="messages")
+    conversation: Mapped[Conversation] = relationship(back_populates="messages")

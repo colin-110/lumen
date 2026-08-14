@@ -24,7 +24,9 @@ async def seed() -> None:
     async with AsyncSessionLocal() as db:
         existing = await crud_user.get_by_email(db, email=settings.FIRST_SUPERUSER_EMAIL)
         if existing:
-            logger.info("Superuser %s already exists. Skipping seed.", settings.FIRST_SUPERUSER_EMAIL)
+            logger.info(
+                "Superuser %s already exists. Skipping seed.", settings.FIRST_SUPERUSER_EMAIL
+            )
             return
 
         # get_or_create, so re-running the seed against a database that

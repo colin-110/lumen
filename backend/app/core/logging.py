@@ -60,5 +60,13 @@ def configure_logging() -> None:
     root.addHandler(handler)
 
     # Quiet the noisiest third-party loggers down a notch.
-    for noisy in ("httpx", "httpcore", "fastembed", "onnxruntime", "urllib3", "botocore", "LiteLLM"):
+    for noisy in (
+        "httpx",
+        "httpcore",
+        "fastembed",
+        "onnxruntime",
+        "urllib3",
+        "botocore",
+        "LiteLLM",
+    ):
         logging.getLogger(noisy).setLevel(logging.WARNING)

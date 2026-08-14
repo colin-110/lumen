@@ -1,4 +1,4 @@
-.PHONY: up down build logs migrate seed install-backend install-frontend setup test test-unit test-integration lint eval-retrieval eval-generation lock
+.PHONY: up down build logs migrate seed install-backend install-frontend setup test test-unit test-integration lint format eval-retrieval eval-generation lock
 
 # docker compose (v2 plugin), not the standalone docker-compose (v1, EOL since
 # 2023 and absent from current Docker installs). scripts/deploy.sh already
@@ -55,7 +55,12 @@ test:
 
 lint:
 	cd backend && poetry run ruff check .
+	cd backend && poetry run ruff format --check .
 	cd frontend && npm run lint
+
+format:
+	cd backend && poetry run ruff check --fix .
+	cd backend && poetry run ruff format .
 
 eval-retrieval:
 	cd backend && poetry run python -m app.evaluation.run

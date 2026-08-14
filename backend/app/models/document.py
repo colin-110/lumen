@@ -42,8 +42,11 @@ class Document(Base, TimestampMixin):
         UUID(as_uuid=True), ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True
     )
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("organization.id", ondelete="SET NULL"), nullable=True, index=True
+        UUID(as_uuid=True),
+        ForeignKey("organization.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
     )
 
-    owner: Mapped["User"] = relationship(back_populates="documents")
-    organization: Mapped["Organization | None"] = relationship(back_populates="documents")
+    owner: Mapped[User] = relationship(back_populates="documents")
+    organization: Mapped[Organization | None] = relationship(back_populates="documents")

@@ -75,11 +75,48 @@ jobs:
       - name: Run Ruff Linting
         run: cd backend && poetry run ruff check .
 
+      - name: Check formatting
+        run: cd backend && poetry run ruff format --check .
+
       - name: Run migrations
         run: cd backend && poetry run alembic upgrade head
 
       - name: Run Pytest
         run: cd backend && poetry run pytest -q
+
+  # The Dockerfile was never built in CI, so breakage in it only surfaced at
+  # deploy time — which is how a runtime image that could not `import requests`
+  # reached production. Building here costs a few minutes and catches it on
+  # the PR instead, and the size guard makes an accidental bloat visible as a
+  # failure rather than a slow drift nobody measures.
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the backend image
+        run: docker build -t lumen-backend:ci ./backend
+      - name: Smoke-test the built image
+        run: |
+          set -euo pipefail
+          docker run --rm lumen-backend:ci python -c "
+          import app.main, requests, fastembed, litellm  # noqa: F401
+          print('imports OK')
+          "
+          docker run --rm lumen-backend:ci alembic --help >/dev/null
+          echo 'alembic entrypoint OK'
+      - name: Guard the image size
+        run: |
+          set -euo pipefail
+          BYTES=$(docker image inspect lumen-backend:ci --format '{{.Size}}')
+          MB=$((BYTES / 1024 / 1024))
+          echo "backend image: ${MB} MB"
+          # Was 916MB before the slimming pass. This ceiling is deliberately
+          # just above the current size so growth has to be justified.
+          LIMIT=900
+          if [ "$MB" -gt "$LIMIT" ]; then
+            echo "::error::image grew to ${MB}MB, over the ${LIMIT}MB budget"
+            exit 1
+          fi
 
   frontend-build:
     runs-on: ubuntu-latest

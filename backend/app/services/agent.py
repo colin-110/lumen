@@ -24,7 +24,8 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from app.core.config import settings
-from app.services import semantic_cache, web_search as web_search_service
+from app.services import semantic_cache
+from app.services import web_search as web_search_service
 from app.services.llm_errors import classify as classify_llm_error
 from app.services.llm_router import MODEL_ALIAS, get_router
 from app.services.retrieval import RetrievedChunk, hybrid_search
@@ -146,16 +147,53 @@ STANDALONE VERSION:"""
 _CONTEXT_DEPENDENT_TOKENS = frozenset(
     {
         # pronouns and possessives
-        "it", "its", "it's", "they", "them", "their", "he", "she", "his", "her", "him",
+        "it",
+        "its",
+        "it's",
+        "they",
+        "them",
+        "their",
+        "he",
+        "she",
+        "his",
+        "her",
+        "him",
         # demonstratives
-        "that", "this", "these", "those", "there", "such",
+        "that",
+        "this",
+        "these",
+        "those",
+        "there",
+        "such",
         # comparatives that only mean something relative to a prior answer
-        "same", "another", "other", "else", "one", "ones",
-        "former", "latter", "above", "below",
-        "previous", "prior", "earlier", "aforementioned", "said",
+        "same",
+        "another",
+        "other",
+        "else",
+        "one",
+        "ones",
+        "former",
+        "latter",
+        "above",
+        "below",
+        "previous",
+        "prior",
+        "earlier",
+        "aforementioned",
+        "said",
     }
 )
-_FOLLOWUP_OPENERS = ("what about", "how about", "and ", "but ", "also ", "why", "when", "where", "who")
+_FOLLOWUP_OPENERS = (
+    "what about",
+    "how about",
+    "and ",
+    "but ",
+    "also ",
+    "why",
+    "when",
+    "where",
+    "who",
+)
 # Below this, a question is too terse to be standalone ("the timeline?").
 _STANDALONE_MIN_WORDS = 6
 
@@ -286,7 +324,9 @@ async def run(
     try:
         chunks = await hybrid_search(search_query, org_str, owner_str, document_ids)
     except Exception:
-        logger.warning("Document retrieval failed; continuing with no document context", exc_info=True)
+        logger.warning(
+            "Document retrieval failed; continuing with no document context", exc_info=True
+        )
         chunks = []
 
     # 3. Optional web fallback when documents don't cover the question
@@ -299,7 +339,9 @@ async def run(
 
     context = _format_context(chunks)
     if web_results:
-        web_block = "\n\n".join(f"- {r['title']}: {r['content'][:400]} ({r['url']})" for r in web_results)
+        web_block = "\n\n".join(
+            f"- {r['title']}: {r['content'][:400]} ({r['url']})" for r in web_results
+        )
         context += f"\n\nWeb search results (no internal documents matched):\n{web_block}"
 
     messages = [{"role": "system", "content": _system_prompt_for(sources)}]
@@ -350,6 +392,8 @@ async def run(
     # of documents, so a later unscoped question that matched it would inherit
     # a document scope it never asked for.
     if full_text and chunks and not scoped and not generation_failed:
-        await semantic_cache.store(search_query, full_text, [s.__dict__ for s in sources], org_str, owner_str)
+        await semantic_cache.store(
+            search_query, full_text, [s.__dict__ for s in sources], org_str, owner_str
+        )
 
     yield PipelineEvent("done", {"cached": False, "latency_ms": latency_ms})

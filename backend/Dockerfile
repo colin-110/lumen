@@ -76,22 +76,34 @@ RUN rm -rf $SITE/sympy $SITE/mpmath $SITE/ml_dtypes $SITE/onnx \
     # Bundled test suites in packages we *do* ship. numpy alone carries ~9MB.
     && rm -rf $SITE/numpy/_core/tests $SITE/numpy/lib/tests $SITE/numpy/f2py/tests \
               $SITE/sqlalchemy/testing \
+    # botocore ships a service definition for every AWS API — roughly 400
+    # directories, ~25MB — and this project speaks to exactly one of them.
+    # `endpoints.json`/`partitions.json` at the data root are required for
+    # endpoint resolution, so they stay; s3 is the only service kept.
+    # Measured: `du -sm botocore` 27MB -> 6MB.
+    && find $SITE/botocore/data -mindepth 1 -maxdepth 1 -type d ! -name 's3' -exec rm -rf {} + \
     # Type stubs are consumed by type checkers, never by the interpreter.
-    && find $SITE -name '*.pyi' -delete
+    && find $SITE -name '*.pyi' -delete \
+    # Bytecode caches from the install step; the runtime regenerates nothing
+    # because PYTHONDONTWRITEBYTECODE is set.
+    && find $SITE -name '__pycache__' -type d -prune -exec rm -rf {} +
 
 # --- runtime: slim, no compilers, just the installed packages + app ------
 FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 
-# curl: container healthcheck. libpq5: the *runtime* Postgres client lib
-# that psycopg's compiled bindings dynamically link against — libpq-dev's
-# headers (needed only to build it) stay behind in the builder stage.
 # tesseract-ocr: OCR fallback for scanned/image-only PDF pages (see
-# app/services/document_parser.py) — a real binary, not a pip package.
+# app/services/document_parser.py) — a real binary, not a pip package, and
+# the only OS-level dependency this image still needs.
+#
+# Deliberately NOT installed any more:
+#   libpq5  psycopg is a dev-only dependency now. Alembic drives migrations
+#           through async_engine_from_config on the asyncpg URL (see
+#           alembic/env.py), so nothing in this image links against libpq.
+#   curl    only ever used by the compose healthcheck, which now calls the
+#           interpreter that is already here instead of a second HTTP client.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    libpq5 \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 

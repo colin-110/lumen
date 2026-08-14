@@ -9,7 +9,7 @@ bcrypt==3.2.0. Talking to the bcrypt module directly removes that pin and the
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any
 
@@ -46,7 +46,7 @@ def _create_token(
     token_version: int = 0,
     extra_claims: dict[str, Any] | None = None,
 ) -> str:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     payload: dict[str, Any] = {
         "sub": str(subject),
         "type": token_type.value,

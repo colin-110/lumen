@@ -108,7 +108,9 @@ async def debug_retrieval(
     # --- 3. retrieval stages ------------------------------------------------
     stages: list[DebugStage] = []
 
-    async def add_stage(key: str, label: str, description: str, fn, previous: list[DebugChunk] | None):
+    async def add_stage(
+        key: str, label: str, description: str, fn, previous: list[DebugChunk] | None
+    ):
         """Runs one stage, records its timing and rank deltas, and hands back
         both the raw chunks (for downstream reuse) and their debug view."""
         t0 = time.perf_counter()
@@ -116,7 +118,13 @@ async def debug_retrieval(
         elapsed = (time.perf_counter() - t0) * 1000
         chunks = _to_chunks(raw, previous)
         stages.append(
-            DebugStage(key=key, label=label, description=description, duration_ms=round(elapsed, 1), chunks=chunks)
+            DebugStage(
+                key=key,
+                label=label,
+                description=description,
+                duration_ms=round(elapsed, 1),
+                chunks=chunks,
+            )
         )
         return raw, chunks
 
@@ -141,7 +149,9 @@ async def debug_retrieval(
         "RRF fusion",
         "Both result lists merged by Reciprocal Rank Fusion — rank-based, so the two scoring scales "
         "never need to be normalised against each other.",
-        lambda: retrieval.hybrid_search_no_rerank(search_query, org_str, owner_str, STAGE_LIMIT, doc_ids),
+        lambda: retrieval.hybrid_search_no_rerank(
+            search_query, org_str, owner_str, STAGE_LIMIT, doc_ids
+        ),
         None,
     )
     _, reranked = await add_stage(
@@ -149,7 +159,9 @@ async def debug_retrieval(
         "Cross-encoder rerank",
         f"{settings.RERANK_MODEL} scores each candidate against the query jointly, rather than comparing "
         "two independently-computed vectors. This is the step that fixes fusion's ordering.",
-        lambda: retrieval.hybrid_search_reranked(search_query, org_str, owner_str, STAGE_LIMIT, doc_ids),
+        lambda: retrieval.hybrid_search_reranked(
+            search_query, org_str, owner_str, STAGE_LIMIT, doc_ids
+        ),
         fused,
     )
     selected_description = (

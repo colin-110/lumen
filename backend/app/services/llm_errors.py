@@ -37,7 +37,11 @@ class LLMErrorInfo:
 
     @property
     def is_retryable(self) -> bool:
-        return self.kind in (LLMErrorKind.RATE_LIMIT, LLMErrorKind.UNAVAILABLE, LLMErrorKind.TIMEOUT)
+        return self.kind in (
+            LLMErrorKind.RATE_LIMIT,
+            LLMErrorKind.UNAVAILABLE,
+            LLMErrorKind.TIMEOUT,
+        )
 
 
 # Providers spell this a dozen ways; match the stable substrings.
@@ -147,7 +151,12 @@ def classify(exc: BaseException) -> LLMErrorInfo:
             provider_detail=raw[:800],
         )
 
-    if "unavailable" in type_name or "503" in text or "overloaded" in text or "internalserver" in type_name:
+    if (
+        "unavailable" in type_name
+        or "503" in text
+        or "overloaded" in text
+        or "internalserver" in type_name
+    ):
         return LLMErrorInfo(
             kind=LLMErrorKind.UNAVAILABLE,
             message="The LLM provider is temporarily unavailable. Try again in a moment.",

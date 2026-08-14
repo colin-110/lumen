@@ -1,3 +1,5 @@
+import itertools
+
 from app.services.chunking import split_text
 
 
@@ -26,7 +28,7 @@ def test_consecutive_chunks_share_overlap_text():
     chunks = split_text(text, chunk_size=200, chunk_overlap=40)
     assert len(chunks) > 1
     # The overlap tail of one chunk should reappear at the start of the next.
-    for prev, nxt in zip(chunks, chunks[1:]):
+    for prev, nxt in itertools.pairwise(chunks):
         tail = prev[-40:].strip()
         assert any(word in nxt for word in tail.split()[:3])
 

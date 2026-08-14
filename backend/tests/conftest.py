@@ -81,7 +81,9 @@ async def clean_tables(database) -> AsyncGenerator[None, None]:
     async def _truncate() -> None:
         async with engine.begin() as conn:
             await conn.execute(
-                text('TRUNCATE "message", "conversation", "document", "user", "organization" CASCADE')
+                text(
+                    'TRUNCATE "message", "conversation", "document", "user", "organization" CASCADE'
+                )
             )
 
     await _truncate()
@@ -121,9 +123,7 @@ async def register_and_login(client, email: str, password: str = "correct-horse-
     assert res.status_code == 201, res.text
     user = res.json()
 
-    res = await client.post(
-        "/api/v1/auth/login", data={"username": email, "password": password}
-    )
+    res = await client.post("/api/v1/auth/login", data={"username": email, "password": password})
     assert res.status_code == 200, res.text
     tokens = res.json()
     return user, {"Authorization": f"Bearer {tokens['access_token']}"}

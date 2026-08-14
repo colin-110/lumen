@@ -115,7 +115,9 @@ async def upload_document(
         await crud_document.update(
             db,
             db_obj=doc,
-            obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message="Storage upload failed"),
+            obj_in=DocumentUpdate(
+                status=DocumentStatus.FAILED, error_message="Storage upload failed"
+            ),
         )
         raise HTTPException(status_code=502, detail="Failed to store document")
 
@@ -142,7 +144,8 @@ async def upload_document(
             ),
         )
         raise HTTPException(
-            status_code=503, detail="Document stored but processing could not be queued. Please retry."
+            status_code=503,
+            detail="Document stored but processing could not be queued. Please retry.",
         ) from exc
 
     return doc

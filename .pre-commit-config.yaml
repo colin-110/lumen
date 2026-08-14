@@ -8,8 +8,11 @@ repos:
     -   id: check-added-large-files
 
 -   repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.2.1
+    rev: v0.7.4
     hooks:
+    # Kept in step with the ruff pinned in backend/pyproject.toml. These had
+    # drifted to 0.2.1 vs 0.7.4, so the hooks enforced different rules and a
+    # different formatting than CI did.
     -   id: ruff
         args: [ --fix ]
     -   id: ruff-format
