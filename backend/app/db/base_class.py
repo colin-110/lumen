@@ -11,7 +11,7 @@ class Base(DeclarativeBase):
     id: Any
 
     @declared_attr.directive
-    def __tablename__(cls) -> str:  # noqa: N805
+    def __tablename__(cls) -> str:
         return cls.__name__.lower()
 
 

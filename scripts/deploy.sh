@@ -52,9 +52,15 @@ docker compose "${COMPOSE_FILES[@]}" run --rm migrate
 echo "==> starting"
 docker compose "${COMPOSE_FILES[@]}" up -d
 
-echo "==> pruning old images"
-# Untagged layers only; keeps disk from filling on a 30GB volume after repeated
-# rebuilds. Does not touch volumes, so no data is at risk.
+echo "==> reclaiming disk"
+# `docker image prune` only removes dangling *images*; it does not touch the
+# BuildKit cache, which is where the bytes actually accumulate. That cache had
+# grown to 15.86GB — over half the 30GB volume — while this script reported
+# itself as pruning. Keep a week of cache so incremental builds stay fast, and
+# drop everything older.
+docker builder prune -f --filter 'until=168h' >/dev/null
 docker image prune -f >/dev/null
+# Neither command touches volumes, so no data is at risk.
+df -h / | tail -1
 
 echo "==> done"

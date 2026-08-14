@@ -12,7 +12,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api import deps
 from app.core.config import settings
 from app.core.rate_limit import client_ip, enforce_rate_limit
-from app.core.security import JWTError, TokenType, create_access_token, create_refresh_token, decode_token
+from app.core.security import (
+    JWTError,
+    TokenType,
+    create_access_token,
+    create_refresh_token,
+    decode_token,
+)
 from app.crud.crud_organization import organization as crud_organization
 from app.crud.crud_user import user as crud_user
 from app.db.session import get_db
@@ -66,7 +72,9 @@ async def register(
         # Two concurrent registrations for the same email both passed the
         # check above; the unique index is the real arbiter.
         await db.rollback()
-        raise HTTPException(status_code=409, detail="An account with this email already exists") from exc
+        raise HTTPException(
+            status_code=409, detail="An account with this email already exists"
+        ) from exc
 
 
 @router.post("/login", response_model=Token)

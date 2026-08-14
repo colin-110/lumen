@@ -71,7 +71,9 @@ def warm_up() -> None:
 
 
 def embed_dense(texts: list[str]) -> list[list[float]]:
-    return [vec.tolist() for vec in get_dense_model().embed(texts, batch_size=settings.EMBED_BATCH_SIZE)]
+    return [
+        vec.tolist() for vec in get_dense_model().embed(texts, batch_size=settings.EMBED_BATCH_SIZE)
+    ]
 
 
 def embed_dense_one(text: str) -> list[float]:

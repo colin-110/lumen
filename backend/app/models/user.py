@@ -24,13 +24,15 @@ class User(Base, TimestampMixin):
     is_superuser: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Bumped to invalidate every token already issued for this user. See the
     # "ver" claim in core/security.py.
-    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False, server_default="0")
+    token_version: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False, server_default="0"
+    )
     organization_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("organization.id", ondelete="SET NULL"), nullable=True
     )
 
-    organization: Mapped["Organization | None"] = relationship(back_populates="users")
-    documents: Mapped[list["Document"]] = relationship(back_populates="owner")
-    conversations: Mapped[list["Conversation"]] = relationship(
+    organization: Mapped[Organization | None] = relationship(back_populates="users")
+    documents: Mapped[list[Document]] = relationship(back_populates="owner")
+    conversations: Mapped[list[Conversation]] = relationship(
         back_populates="user", cascade="all, delete-orphan"
     )

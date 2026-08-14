@@ -8,8 +8,9 @@ Create Date: 2026-08-04
 from __future__ import annotations
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision = "0001"
 down_revision = None
@@ -22,8 +23,18 @@ def upgrade() -> None:
         "organization",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("name", sa.String(length=255), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
     op.create_index("ix_organization_name", "organization", ["name"])
 
@@ -41,8 +52,18 @@ def upgrade() -> None:
             sa.ForeignKey("organization.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
         sa.UniqueConstraint("email", name="uq_user_email"),
     )
     op.create_index("ix_user_email", "user", ["email"])
@@ -57,7 +78,12 @@ def upgrade() -> None:
         sa.Column(
             "status",
             sa.Enum(
-                "PENDING", "PROCESSING", "COMPLETED", "FAILED", name="document_status", native_enum=False
+                "PENDING",
+                "PROCESSING",
+                "COMPLETED",
+                "FAILED",
+                name="document_status",
+                native_enum=False,
             ),
             nullable=False,
             server_default="PENDING",
@@ -67,7 +93,10 @@ def upgrade() -> None:
         sa.Column("storage_key", sa.String(length=1024), nullable=False),
         sa.Column("metadata", postgresql.JSONB(), nullable=False, server_default="{}"),
         sa.Column(
-            "owner_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+            "owner_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
         ),
         sa.Column(
             "organization_id",
@@ -75,8 +104,18 @@ def upgrade() -> None:
             sa.ForeignKey("organization.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
     op.create_index("ix_document_filename", "document", ["filename"])
     op.create_index("ix_document_status", "document", ["status"])
@@ -86,12 +125,27 @@ def upgrade() -> None:
     op.create_table(
         "conversation",
         sa.Column("id", postgresql.UUID(as_uuid=True), primary_key=True),
-        sa.Column("title", sa.String(length=255), nullable=False, server_default="New conversation"),
         sa.Column(
-            "user_id", postgresql.UUID(as_uuid=True), sa.ForeignKey("user.id", ondelete="CASCADE"), nullable=False
+            "title", sa.String(length=255), nullable=False, server_default="New conversation"
         ),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "user_id",
+            postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("user.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
     op.create_index("ix_conversation_user_id", "conversation", ["user_id"])
 
@@ -113,8 +167,18 @@ def upgrade() -> None:
         sa.Column("sources", postgresql.JSONB(), nullable=False, server_default="[]"),
         sa.Column("latency_ms", sa.Integer(), nullable=True),
         sa.Column("cached", sa.Boolean(), nullable=False, server_default=sa.false()),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
     )
     op.create_index("ix_message_conversation_created", "message", ["conversation_id", "created_at"])
 

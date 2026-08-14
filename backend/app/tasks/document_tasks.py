@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-import os
 import tempfile
 import uuid
+from pathlib import Path
 
 import app.db.base  # noqa: F401 - registers every model so relationship() string refs resolve
 from app.core.celery_app import celery_app, run_async
@@ -36,9 +36,11 @@ async def _process_document(document_id: str) -> None:
             logger.error("Document %s not found; skipping", document_id)
             return
 
-        await crud_document.update(db, db_obj=doc, obj_in=DocumentUpdate(status=DocumentStatus.PROCESSING))
+        await crud_document.update(
+            db, db_obj=doc, obj_in=DocumentUpdate(status=DocumentStatus.PROCESSING)
+        )
 
-        suffix = os.path.splitext(doc.filename)[1] or ""
+        suffix = Path(doc.filename).suffix
         tmp_path = None
         try:
             with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -48,7 +50,9 @@ async def _process_document(document_id: str) -> None:
                 await crud_document.update(
                     db,
                     db_obj=doc,
-                    obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message="Download from storage failed"),
+                    obj_in=DocumentUpdate(
+                        status=DocumentStatus.FAILED, error_message="Download from storage failed"
+                    ),
                 )
                 return
 
@@ -64,7 +68,9 @@ async def _process_document(document_id: str) -> None:
                 )
                 return
 
-            chunks = split_text(text, chunk_size=settings.CHUNK_SIZE, chunk_overlap=settings.CHUNK_OVERLAP)
+            chunks = split_text(
+                text, chunk_size=settings.CHUNK_SIZE, chunk_overlap=settings.CHUNK_OVERLAP
+            )
             chunk_count = await retrieval.index_chunks(
                 document_id=doc.id,
                 filename=doc.filename,
@@ -80,7 +86,9 @@ async def _process_document(document_id: str) -> None:
             )
             org_id = str(doc.organization_id) if doc.organization_id else None
             await semantic_cache.invalidate(org_id, str(doc.owner_id))
-            logger.info("Indexed %d chunks for document %s (%s)", chunk_count, document_id, doc.filename)
+            logger.info(
+                "Indexed %d chunks for document %s (%s)", chunk_count, document_id, doc.filename
+            )
 
         except PERMANENT_ERRORS as exc:
             # Nothing about retrying a corrupt file, an unsupported format or
@@ -93,15 +101,17 @@ async def _process_document(document_id: str) -> None:
                 db_obj=doc,
                 obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message=str(exc)[:1000]),
             )
-        except Exception as exc:  # noqa: BLE001 - convert to a stored failure, not a task crash
+        except Exception as exc:
             logger.error("Failed to process document %s: %s", document_id, exc, exc_info=True)
             await crud_document.update(
-                db, db_obj=doc, obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message=str(exc)[:1000])
+                db,
+                db_obj=doc,
+                obj_in=DocumentUpdate(status=DocumentStatus.FAILED, error_message=str(exc)[:1000]),
             )
             raise
         finally:
-            if tmp_path and os.path.exists(tmp_path):
-                os.remove(tmp_path)
+            if tmp_path:
+                Path(tmp_path).unlink(missing_ok=True)
 
 
 async def ingest_document_inline(document_id: str) -> None:
@@ -132,4 +142,4 @@ def process_document(self, document_id: str):
         run_async(_process_document(document_id))
     except Exception as exc:
         logger.warning("Retrying document %s after error: %s", document_id, exc)
-        raise self.retry(exc=exc)
+        raise self.retry(exc=exc) from exc

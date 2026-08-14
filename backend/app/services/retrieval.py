@@ -43,14 +43,20 @@ def _tenant_filter(
     # Documents are visible within an organization; users without an org
     # only see their own uploads.
     if organization_id:
-        must = [models.FieldCondition(key="organization_id", match=models.MatchValue(value=organization_id))]
+        must = [
+            models.FieldCondition(
+                key="organization_id", match=models.MatchValue(value=organization_id)
+            )
+        ]
     else:
         must = [models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))]
     if document_ids:
         # Narrow to an explicit document set on top of — never instead of —
         # the tenant scope, so a caller-supplied id can't reach another org's
         # chunks.
-        must.append(models.FieldCondition(key="document_id", match=models.MatchAny(any=list(document_ids))))
+        must.append(
+            models.FieldCondition(key="document_id", match=models.MatchAny(any=list(document_ids)))
+        )
     return models.Filter(must=must)
 
 
@@ -162,6 +168,10 @@ def _search_sync(
         return []
 
     rerank_scores = embeddings.rerank(query, texts)
+    # strict=True: one score per candidate is an invariant of the reranker.
+    # Silently zipping to the shorter list would drop retrieved chunks out of
+    # the context with no error anywhere — the answer would just quietly be
+    # built from less evidence, which is the hardest kind of bug to notice.
     scored = [
         RetrievedChunk(
             chunk_id=str(p.id),
@@ -170,7 +180,7 @@ def _search_sync(
             text=p.payload.get("text", ""),
             score=float(score),
         )
-        for p, score in zip(points, rerank_scores)
+        for p, score in zip(points, rerank_scores, strict=True)
     ]
     scored.sort(key=lambda c: c.score, reverse=True)
 
@@ -229,7 +239,11 @@ async def hybrid_search(
 
 
 def _dense_only_sync(
-    query: str, organization_id: str | None, owner_id: str, limit: int, document_ids: list[str] | None = None
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
     dense_vec = embeddings.embed_dense_one(query)
     result = qdrant.query_points(
@@ -244,13 +258,23 @@ def _dense_only_sync(
 
 
 async def dense_search(
-    query: str, organization_id: str | None, owner_id: str, limit: int = 10, document_ids: list[str] | None = None
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int = 10,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_dense_only_sync, query, organization_id, owner_id, limit, document_ids)
+    return await asyncio.to_thread(
+        _dense_only_sync, query, organization_id, owner_id, limit, document_ids
+    )
 
 
 def _sparse_only_sync(
-    query: str, organization_id: str | None, owner_id: str, limit: int, document_ids: list[str] | None = None
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
     sparse = embeddings.embed_sparse_one(query)
     result = qdrant.query_points(
@@ -265,22 +289,38 @@ def _sparse_only_sync(
 
 
 async def sparse_search(
-    query: str, organization_id: str | None, owner_id: str, limit: int = 10, document_ids: list[str] | None = None
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int = 10,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_sparse_only_sync, query, organization_id, owner_id, limit, document_ids)
+    return await asyncio.to_thread(
+        _sparse_only_sync, query, organization_id, owner_id, limit, document_ids
+    )
 
 
 def _hybrid_no_rerank_sync(
-    query: str, organization_id: str | None, owner_id: str, limit: int, document_ids: list[str] | None = None
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
     points, _texts = _hybrid_candidates_sync(query, organization_id, owner_id, limit, document_ids)
     return _points_to_chunks(points)
 
 
 async def hybrid_search_no_rerank(
-    query: str, organization_id: str | None, owner_id: str, limit: int = 10, document_ids: list[str] | None = None
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int = 10,
+    document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
-    return await asyncio.to_thread(_hybrid_no_rerank_sync, query, organization_id, owner_id, limit, document_ids)
+    return await asyncio.to_thread(
+        _hybrid_no_rerank_sync, query, organization_id, owner_id, limit, document_ids
+    )
 
 
 async def hybrid_search_reranked(
@@ -304,7 +344,7 @@ async def hybrid_search_reranked(
             return []
         rerank_scores = embeddings.rerank(query, texts)
         scored = _points_to_chunks(points)
-        for chunk, score in zip(scored, rerank_scores):
+        for chunk, score in zip(scored, rerank_scores, strict=True):
             chunk.score = float(score)
         scored.sort(key=lambda c: c.score, reverse=True)
         return scored[:limit]
@@ -325,13 +365,18 @@ def _upsert_sync(
     sparse_vecs = embeddings.embed_sparse(chunks)
 
     points = []
-    for text, dense, sparse in zip(chunks, dense_vecs, sparse_vecs):
+    # strict=True for the same reason as the rerank zip above: a length
+    # mismatch here would mean chunks were never indexed, so the document
+    # would look ingested while part of it was silently missing from search.
+    for text, dense, sparse in zip(chunks, dense_vecs, sparse_vecs, strict=True):
         points.append(
             models.PointStruct(
                 id=str(uuid.uuid4()),
                 vector={
                     DENSE_VECTOR_NAME: dense,
-                    SPARSE_VECTOR_NAME: models.SparseVector(indices=sparse["indices"], values=sparse["values"]),
+                    SPARSE_VECTOR_NAME: models.SparseVector(
+                        indices=sparse["indices"], values=sparse["values"]
+                    ),
                 },
                 payload={
                     "document_id": str(document_id),
@@ -356,4 +401,6 @@ async def index_chunks(
     organization_id: uuid.UUID | None,
     chunks: list[str],
 ) -> int:
-    return await asyncio.to_thread(_upsert_sync, document_id, filename, owner_id, organization_id, chunks)
+    return await asyncio.to_thread(
+        _upsert_sync, document_id, filename, owner_id, organization_id, chunks
+    )

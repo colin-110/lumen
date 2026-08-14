@@ -31,7 +31,9 @@ class CRUDConversation:
         )
         return list(result.scalars().all())
 
-    async def create(self, db: AsyncSession, user_id: uuid.UUID, title: str | None = None) -> Conversation:
+    async def create(
+        self, db: AsyncSession, user_id: uuid.UUID, title: str | None = None
+    ) -> Conversation:
         db_obj = Conversation(user_id=user_id, title=title or "New conversation")
         db.add(db_obj)
         await db.commit()
@@ -57,7 +59,9 @@ class CRUDConversation:
         )
         await db.commit()
 
-    async def rename_if_default(self, db: AsyncSession, conversation: Conversation, new_title: str) -> None:
+    async def rename_if_default(
+        self, db: AsyncSession, conversation: Conversation, new_title: str
+    ) -> None:
         if conversation.title == "New conversation":
             conversation.title = new_title[:255]
             db.add(conversation)

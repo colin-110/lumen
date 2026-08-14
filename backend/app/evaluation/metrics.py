@@ -35,7 +35,11 @@ def reciprocal_rank(retrieved: list[str], relevant: set[str]) -> float:
 def ndcg_at_k(retrieved: list[str], relevant: set[str], k: int) -> float:
     """Binary-relevance NDCG@k: gain is 1 for a relevant doc at that rank, 0
     otherwise, discounted by log2(rank + 1)."""
-    dcg = sum(1.0 / math.log2(i + 1) for i, doc_id in enumerate(retrieved[:k], start=1) if doc_id in relevant)
+    dcg = sum(
+        1.0 / math.log2(i + 1)
+        for i, doc_id in enumerate(retrieved[:k], start=1)
+        if doc_id in relevant
+    )
     ideal_hits = min(len(relevant), k)
     idcg = sum(1.0 / math.log2(i + 1) for i in range(1, ideal_hits + 1))
     return dcg / idcg if idcg > 0 else 0.0

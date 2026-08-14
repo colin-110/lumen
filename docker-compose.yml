@@ -143,7 +143,10 @@ services:
       minio:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      # The interpreter is already in the image; curl was a second HTTP client
+      # installed solely for this line, and apt-installing it pulled libcurl
+      # and its dependencies into the runtime layer.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=4).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
       retries: 10

@@ -22,7 +22,9 @@ async def list_conversations(
     limit: int = 50,
     current_user: User = Depends(deps.get_current_active_user),
 ) -> Any:
-    return await crud_conversation.list_for_user(db, user_id=current_user.id, skip=skip, limit=limit)
+    return await crud_conversation.list_for_user(
+        db, user_id=current_user.id, skip=skip, limit=limit
+    )
 
 
 @router.post("/", response_model=ConversationRead, status_code=status.HTTP_201_CREATED)

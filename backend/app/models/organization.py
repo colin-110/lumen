@@ -22,5 +22,5 @@ class Organization(Base, TimestampMixin):
     # which quietly made org-scoped sharing unreachable in practice.
     name: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
 
-    users: Mapped[list["User"]] = relationship(back_populates="organization")
-    documents: Mapped[list["Document"]] = relationship(back_populates="organization")
+    users: Mapped[list[User]] = relationship(back_populates="organization")
+    documents: Mapped[list[Document]] = relationship(back_populates="organization")

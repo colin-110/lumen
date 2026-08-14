@@ -76,7 +76,7 @@ def _ensure_payload_index(collection: str, field: str, schema) -> None:
     """
     try:
         client.create_payload_index(collection, field_name=field, field_schema=schema)
-    except Exception:  # noqa: BLE001 - already-exists is the expected case
+    except Exception:
         logger.debug("Payload index %s.%s already present", collection, field)
 
 
@@ -112,7 +112,11 @@ def _delete_document_points_sync(document_id: str) -> None:
         collection_name=COLLECTION_NAME,
         points_selector=models.FilterSelector(
             filter=models.Filter(
-                must=[models.FieldCondition(key="document_id", match=models.MatchValue(value=document_id))]
+                must=[
+                    models.FieldCondition(
+                        key="document_id", match=models.MatchValue(value=document_id)
+                    )
+                ]
             )
         ),
     )
@@ -136,6 +140,10 @@ def delete_owner_points(owner_id: str) -> None:
     client.delete(
         collection_name=COLLECTION_NAME,
         points_selector=models.FilterSelector(
-            filter=models.Filter(must=[models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))])
+            filter=models.Filter(
+                must=[
+                    models.FieldCondition(key="owner_id", match=models.MatchValue(value=owner_id))
+                ]
+            )
         ),
     )

@@ -74,7 +74,11 @@ def _lookup_sync(query: str, organization_id: str | None, owner_id: str) -> Cach
 
 
 def _store_sync(
-    query: str, answer: str, sources: list[dict[str, Any]], organization_id: str | None, owner_id: str
+    query: str,
+    answer: str,
+    sources: list[dict[str, Any]],
+    organization_id: str | None,
+    owner_id: str,
 ) -> None:
     vec = embeddings.embed_dense_one(query)
     # Recorded so a single document's deletion can invalidate exactly the
@@ -111,7 +115,11 @@ async def lookup(query: str, organization_id: str | None, owner_id: str) -> Cach
 
 
 async def store(
-    query: str, answer: str, sources: list[dict[str, Any]], organization_id: str | None, owner_id: str
+    query: str,
+    answer: str,
+    sources: list[dict[str, Any]],
+    organization_id: str | None,
+    owner_id: str,
 ) -> None:
     if not settings.SEMANTIC_CACHE_ENABLED:
         return

@@ -14,6 +14,8 @@ did.
 
 from __future__ import annotations
 
+import itertools
+
 from app.services.chunking import split_text
 
 
@@ -49,7 +51,7 @@ class TestSeparatorsSurvive:
         assert _no_whitespace("".join(chunks)) == _no_whitespace(paragraph)
 
     def test_a_decimal_amount_is_not_mangled(self):
-        """"$4,500.00 is due" must not become "$4,500 00 is due"."""
+        """ "$4,500.00 is due" must not become "$4,500 00 is due"."""
         body = (
             "The total contract value is $4,500.00 payable in advance. "
             "A late fee of 1.5% per month applies to any overdue balance. "
@@ -66,7 +68,7 @@ class TestOverlapStillWorks:
         chunks = split_text(paragraph, chunk_size=200, chunk_overlap=50)
 
         assert len(chunks) > 2
-        for previous, following in zip(chunks, chunks[1:]):
+        for previous, following in itertools.pairwise(chunks):
             tail_words = previous[-50:].strip().split()[:3]
             assert any(word in following for word in tail_words)
 

@@ -61,6 +61,12 @@ services:
       # Fewer candidates through the cross-encoder lowers peak RSS. Re-check
       # with `make eval-retrieval` before and after if you tune this.
       - RETRIEVE_CANDIDATES=20
+      # onnxruntime otherwise sizes its thread pool from nproc and gives each
+      # thread its own allocation arena. On a 2-vCPU box serving one request
+      # at a time that buys no throughput and costs resident memory, so pin
+      # it to a single intra-op thread here. Unset (0, "let onnxruntime
+      # decide") remains the default everywhere else.
+      - ONNX_THREADS=1
     deploy:
       resources:
         limits:

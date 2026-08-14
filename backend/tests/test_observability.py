@@ -8,6 +8,7 @@ log entries only matter when someone later reads the logs.
 from __future__ import annotations
 
 import re
+from typing import ClassVar
 
 from app.main import _REQUEST_ID_RE, _safe_request_id
 
@@ -23,7 +24,7 @@ class TestRequestIdValidation:
     def test_newlines_are_rejected(self):
         """The id is written into every log line for the request. A value
         containing a newline can append a fabricated log entry."""
-        forged = "ok\nlevel=ERROR msg=\"database deleted\""
+        forged = 'ok\nlevel=ERROR msg="database deleted"'
         assert _safe_request_id(forged) != forged
 
     def test_control_characters_are_rejected(self):
@@ -45,10 +46,10 @@ class TestMetricLabelCardinality:
         from app.main import _metric_path
 
         class _Route:
-            path = "/api/v1/documents/{document_id}"
+            path: ClassVar[str] = "/api/v1/documents/{document_id}"
 
         class _Request:
-            scope = {"route": _Route()}
+            scope: ClassVar[dict] = {"route": _Route()}
 
         assert _metric_path(_Request()) == "/api/v1/documents/{document_id}"
 
@@ -56,7 +57,7 @@ class TestMetricLabelCardinality:
         from app.main import _metric_path
 
         class _Request:
-            scope: dict = {}
+            scope: ClassVar[dict] = {}
 
         assert _metric_path(_Request()) == "__unmatched__"
 
@@ -64,10 +65,10 @@ class TestMetricLabelCardinality:
         from app.main import _metric_path
 
         class _Route:
-            path = "/api/v1/conversations/{conversation_id}"
+            path: ClassVar[str] = "/api/v1/conversations/{conversation_id}"
 
         class _Request:
-            scope = {"route": _Route()}
+            scope: ClassVar[dict] = {"route": _Route()}
 
         # Whatever the concrete URL was, the label is the template.
         assert _metric_path(_Request()) == _metric_path(_Request())

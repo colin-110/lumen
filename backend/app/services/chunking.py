@@ -34,10 +34,12 @@ _DEFAULT_SEPARATORS = ["\n\n", "\n", ". ", "? ", "! ", " ", ""]
 # ATX headings, numbered/lettered contract clauses, and short ALL-CAPS lines
 # used as headers in exported PDFs and DOCX.
 _HEADING_PATTERNS = (
-    re.compile(r"^\s{0,3}#{1,6}\s+\S"),                     # "## Payment Terms"
-    re.compile(r"^\s{0,3}\d+(\.\d+)*[.)]\s+\S"),            # "3. Payment Terms", "3.1) ..."
-    re.compile(r"^\s{0,3}(?:article|section|clause|appendix|schedule)\s+[\dIVXivx]+", re.IGNORECASE),
-    re.compile(r"^\s{0,3}[A-Z][A-Z0-9 &/,'()-]{3,60}$"),    # "PAYMENT TERMS"
+    re.compile(r"^\s{0,3}#{1,6}\s+\S"),  # "## Payment Terms"
+    re.compile(r"^\s{0,3}\d+(\.\d+)*[.)]\s+\S"),  # "3. Payment Terms", "3.1) ..."
+    re.compile(
+        r"^\s{0,3}(?:article|section|clause|appendix|schedule)\s+[\dIVXivx]+", re.IGNORECASE
+    ),
+    re.compile(r"^\s{0,3}[A-Z][A-Z0-9 &/,'()-]{3,60}$"),  # "PAYMENT TERMS"
 )
 # A heading is a short standalone line. Anything longer is prose that merely
 # happens to start with a number ("1990 was the year the company ...").
@@ -105,7 +107,9 @@ def split_text(
     # Nothing detectable (plain prose, OCR output): behave exactly as the flat
     # splitter did rather than inventing structure that isn't there.
     if len(sections) <= 1 and not (sections and sections[0][0]):
-        return _merge_with_overlap(_split_recursive(text, seps, chunk_size), chunk_size, chunk_overlap)
+        return _merge_with_overlap(
+            _split_recursive(text, seps, chunk_size), chunk_size, chunk_overlap
+        )
 
     chunks: list[str] = []
     for heading, body in sections:

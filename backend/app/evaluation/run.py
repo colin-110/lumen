@@ -85,7 +85,9 @@ def _print_report(results: list[StrategyResult]) -> None:
     header = f"| {'Strategy':<20} | {'Recall@5':>9} | {'Recall@10':>10} | {'MRR':>6} | {'NDCG@10':>8} | {'Avg latency':>12} |"
     sep = f"|{'-' * 22}|{'-' * 11}|{'-' * 12}|{'-' * 8}|{'-' * 10}|{'-' * 14}|"
     print("\nRetrieval strategy comparison")
-    print(f"({len(QUESTIONS)} questions, {len(DOCUMENTS)} fixture documents, top-10 per strategy)\n")
+    print(
+        f"({len(QUESTIONS)} questions, {len(DOCUMENTS)} fixture documents, top-10 per strategy)\n"
+    )
     print(header)
     print(sep)
     for r in results:

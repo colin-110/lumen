@@ -121,13 +121,16 @@ class TestTokenLifetime:
         db_session.add(db_user)
         await db_session.commit()
 
-        res = await client.post("/api/v1/debug/retrieval", json={"message": "hello"}, headers=headers)
+        res = await client.post(
+            "/api/v1/debug/retrieval", json={"message": "hello"}, headers=headers
+        )
         assert res.status_code in (400, 401), res.text
         assert res.status_code != 200
 
     async def test_refresh_rejects_a_malformed_subject(self, client):
-        from app.core.security import TokenType, _create_token
         from datetime import timedelta
+
+        from app.core.security import TokenType, _create_token
 
         forged = _create_token("not-a-uuid", TokenType.REFRESH, timedelta(minutes=5))
         res = await client.post("/api/v1/auth/refresh", json={"refresh_token": forged})
