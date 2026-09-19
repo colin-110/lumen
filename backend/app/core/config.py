@@ -93,6 +93,18 @@ class Settings(BaseSettings):
     POSTGRES_SERVER: str = "localhost"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "enterprise_ai"
+    # Unset for a local/self-hosted Postgres (docker-compose's own container
+    # doesn't speak TLS). Managed providers reached over the public internet
+    # — Neon, RDS with "Require SSL" — need this set to "require".
+    #
+    # SQLAlchemy passes URL query params straight through as kwargs to the
+    # underlying driver's connect(), and the two drivers this app uses name
+    # the param differently: asyncpg's Python API only accepts `ssl=`
+    # (`sslmode=` raises "unexpected keyword argument" — it only understands
+    # sslmode when parsing a raw libpq-style DSN string, which SQLAlchemy
+    # doesn't hand it one of), while psycopg accepts libpq's own `sslmode=`
+    # directly. Same value, two query keys, applied below per DSN.
+    POSTGRES_SSL_MODE: str | None = None
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
     DB_POOL_TIMEOUT: int = 30
@@ -103,7 +115,7 @@ class Settings(BaseSettings):
     @property
     def SQLALCHEMY_DATABASE_URI(self) -> str:
         """Async DSN used by the API and the worker."""
-        return str(
+        dsn = str(
             PostgresDsn.build(
                 scheme="postgresql+asyncpg",
                 username=self.POSTGRES_USER,
@@ -113,12 +125,15 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+        if self.POSTGRES_SSL_MODE:
+            dsn += f"?ssl={self.POSTGRES_SSL_MODE}"
+        return dsn
 
     @computed_field
     @property
     def SYNC_DATABASE_URI(self) -> str:
         """Sync DSN, used by tooling that cannot drive asyncio."""
-        return str(
+        dsn = str(
             PostgresDsn.build(
                 scheme="postgresql+psycopg",
                 username=self.POSTGRES_USER,
@@ -128,6 +143,9 @@ class Settings(BaseSettings):
                 path=self.POSTGRES_DB,
             )
         )
+        if self.POSTGRES_SSL_MODE:
+            dsn += f"?sslmode={self.POSTGRES_SSL_MODE}"
+        return dsn
 
     # ---------------------------------------------------------- redis/queue
     # Host-side default is 6380 (not the Redis standard 6379) to match this

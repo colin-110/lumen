@@ -1,0 +1,105 @@
+# Render Blueprint for the backend only — the free managed-services deploy
+# path documented in README.md under "Deploying". Frontend goes to Vercel
+# separately (zero-config for Next.js, no blueprint needed); Postgres/Qdrant/
+# object storage are managed elsewhere (Neon/Qdrant Cloud/R2) and wired in
+# below as vars you fill in on first deploy.
+#
+# Redis/Upstash IS wired in below. REDIS_URL only backs rate limiting
+# (app/core/rate_limit.py) — the semantic cache is Qdrant-backed, not Redis —
+# and that code fails *open* on any Redis error (logs a warning, lets the
+# request through) rather than erroring, so it's not a hard dependency. But
+# this deploy runs with ALLOW_OPEN_REGISTRATION=true (the default) as a
+# public demo link, which makes real per-user rate limiting worth the one
+# extra free account: Upstash's free tier is 256MB / 500k commands/month,
+# no card. Get the rediss:// URL from Upstash (Redis -> your DB -> TCP tab)
+# and paste it in during the Blueprint prompt.
+#
+# `sync: false` means "set this in the Render dashboard, not in git" — every
+# such var is a secret or a value unique to your managed-service accounts.
+#
+# Render's free web service plan is 512 MB RAM. This backend measures ~578 MB
+# with every RAM-saving flag below already applied (see README's "Running on
+# a 1GB host" section) — it is close enough to fit but can OOM under load. If
+# it does, the cheapest first thing to try is lowering RETRIEVE_CANDIDATES
+# further (e.g. to 12) before reaching for a paid plan.
+services:
+  - type: web
+    name: lumen-backend
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /health
+    autoDeployTrigger: commit
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: STRICT_PRODUCTION_CHECKS
+        value: "true"
+
+      # --- RAM: same trade-offs as docker-compose.free-tier.yml -----------
+      - key: INGEST_INLINE
+        value: "true"
+      - key: UVICORN_WORKERS
+        value: "1"
+      - key: ONNX_THREADS
+        value: "1"
+      - key: RETRIEVE_CANDIDATES
+        value: "20"
+
+      # --- secrets: generated for you ------------------------------------
+      - key: SECRET_KEY
+        generateValue: true
+      - key: METRICS_TOKEN
+        generateValue: true
+
+      # --- Render sits in front as the reverse proxy ----------------------
+      - key: TRUSTED_PROXY_HEADERS
+        value: "true"
+
+      # --- fill in on first deploy: your Vercel URL ------------------------
+      - key: BACKEND_CORS_ORIGINS
+        sync: false # e.g. https://your-app.vercel.app
+
+      # --- fill in on first deploy: Neon (Settings -> Connection Details) --
+      - key: POSTGRES_USER
+        sync: false
+      - key: POSTGRES_PASSWORD
+        sync: false
+      - key: POSTGRES_SERVER
+        sync: false # the Neon host, not "localhost"
+      - key: POSTGRES_DB
+        sync: false
+      - key: POSTGRES_SSL_MODE
+        value: require
+
+      # --- fill in on first deploy: Upstash (Redis -> your DB -> TCP tab) -
+      - key: REDIS_URL
+        sync: false # rediss://... (note the TLS scheme)
+
+      # --- fill in on first deploy: Qdrant Cloud cluster -------------------
+      - key: QDRANT_URL
+        sync: false
+      - key: QDRANT_API_KEY
+        sync: false
+
+      # --- fill in on first deploy: Cloudflare R2 bucket -------------------
+      - key: S3_ENDPOINT_URL
+        sync: false # https://<account_id>.r2.cloudflarestorage.com
+      - key: S3_ACCESS_KEY
+        sync: false
+      - key: S3_SECRET_KEY
+        sync: false
+      - key: S3_BUCKET
+        sync: false
+      - key: S3_REGION
+        value: auto
+
+      # --- fill in on first deploy: at least one LLM key -------------------
+      - key: GEMINI_API_KEY
+        sync: false
+
+      # --- generated for you; read it back from the Render dashboard to log in ---
+      - key: FIRST_SUPERUSER_PASSWORD
+        generateValue: true

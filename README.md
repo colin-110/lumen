@@ -799,6 +799,43 @@ without touching application code (`storage.py` already speaks the plain S3 API 
 | MinIO | Real S3 (drop `S3_ENDPOINT_URL`, use an IAM role) |
 | backend/worker/frontend | ECS Fargate or EKS behind an ALB |
 
+**Free — managed free tiers, no VM to manage.** The smallest-setup option: every stateful service
+moves to a provider's free tier, and only the backend needs to stay resident. No server to patch,
+deploys are `git push`.
+
+| Container today | Free managed equivalent |
+|---|---|
+| frontend | [Vercel](https://vercel.com) — set the project root to `frontend/`, add a `NEXT_PUBLIC_API_URL` env var pointing at the backend. Zero-config for Next.js, atomic deploys (no downtime on redeploy). |
+| backend | [Render](https://render.com) free web service, built from `render.yaml` at the repo root (`New +` → `Blueprint`). Free plan is 512 MB RAM against this backend's ~578 MB footprint (see below) — tight but workable for a demo/single user; if it OOMs, lower `RETRIEVE_CANDIDATES` further before reaching for a paid plan. |
+| worker | dropped — `render.yaml` sets `INGEST_INLINE=true`, same trade-off as the free-tier profile above |
+| db | [Neon](https://neon.tech) free Postgres. Set `POSTGRES_SSL_MODE=require` (Neon requires TLS; `docker-compose`'s own Postgres does not speak it, so this stays unset there). |
+| redis | [Upstash](https://upstash.com) free Redis (256 MB / 500k commands per month, no card) — copy its `rediss://` URL into `REDIS_URL`. Only backs rate limiting (the semantic cache is Qdrant-backed) and fails open without it, so it's skippable for a private/solo deploy — but worth keeping if `ALLOW_OPEN_REGISTRATION=true` on a public link, since that's exactly the case with no other cap on abuse. |
+| qdrant | [Qdrant Cloud](https://cloud.qdrant.io) free 1 GB cluster. |
+| minio | [Cloudflare R2](https://developers.cloudflare.com/r2/) free tier (10 GB) — S3-compatible, so only `S3_ENDPOINT_URL`/keys change. |
+| grafana + prometheus | dropped — nothing free hosts them alongside this; `/metrics` still exists if you want to scrape it from somewhere that does |
+
+Render's free web services spin down after 15 minutes idle, which reads as downtime on the next
+request (a ~30–60s cold start while the ONNX models reload). A free
+[UptimeRobot](https://uptimerobot.com) monitor pinging `/health` every 5 minutes keeps it warm
+around the clock — that's the "no downtime" half of this setup, and it costs nothing.
+
+Gotchas worth knowing before you hit them:
+
+- **Neon's connection string won't paste in as-is.** Its dashboard gives you a libpq-shaped URL
+  (`...?sslmode=require&channel_binding=require`) meant for `psycopg`. This app builds its own DSN
+  from `POSTGRES_USER`/`PASSWORD`/`SERVER`/`DB` rather than accepting a full URL, and the async
+  (`asyncpg`) and sync (`psycopg`) sides need SSL spelled differently — `SQLALCHEMY_DATABASE_URI`
+  passes `?ssl=require` (asyncpg's Python API only accepts `ssl=`; `sslmode=` raises a `TypeError`),
+  `SYNC_DATABASE_URI` passes `?sslmode=require` (what `psycopg`/Alembic expect). `POSTGRES_SSL_MODE`
+  drives both automatically — just copy the host/user/password/db from Neon, not the whole string.
+- **`BACKEND_CORS_ORIGINS` must match the browser's `Origin` header exactly** — scheme + host, no
+  trailing slash. A Vercel URL pasted with a trailing `/` fails every cross-origin request with
+  nothing but a CORS error in the browser console to go on.
+- **Use the Vercel project's Domains tab, not the first deploy screen's URL.** The link a first
+  deploy shows can be a hash-suffixed per-build URL, not the auto-updating production alias.
+- **UptimeRobot pinging `/health` is safe here either way it sends the request** — FastAPI/Starlette
+  auto-registers `HEAD` alongside any `GET` route, so `/health` doesn't 405 if the monitor uses HEAD.
+
 ---
 
 ## Project structure
