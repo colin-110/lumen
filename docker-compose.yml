@@ -87,10 +87,10 @@ services:
 
   # Runs `alembic upgrade head` once and exits. The backend waits on it
   # completing successfully, so `docker compose up` on a fresh checkout gives
-  # a working stack — previously migrations existed only in `make migrate`
-  # (host-side, needs a local Poetry install) and in scripts/deploy.sh, so a
+  # a working stack — previously migrations only ran via a separate, undocumented
+  # command (`make migrate`, host-side, needs a local Poetry install), so a
   # plain `docker compose up` booted the API against an empty database and
-  # every request 500'd until you knew to run a second, undocumented command.
+  # every request 500'd until you knew to run it.
   migrate:
     build: ./backend
     image: lumen-backend:latest
@@ -214,6 +214,10 @@ services:
           memory: 200m
 
   prometheus:
+    # Off by default — set COMPOSE_PROFILES=monitoring (in .env, or inline)
+    # to bring these two up. /metrics stays exposed either way, so anything
+    # external can still scrape the backend without this stack running.
+    profiles: ["monitoring"]
     image: prom/prometheus:v3.0.1
     container_name: enterprise_ai_prometheus
     volumes:
@@ -229,6 +233,8 @@ services:
           memory: 200m
 
   grafana:
+    # See the profiles note on prometheus above — same toggle covers both.
+    profiles: ["monitoring"]
     # grafana-oss excludes the bundled enterprise plugins/features this
     # project never uses — meaningfully smaller image for the same
     # dashboards, since only Prometheus is wired up as a datasource here.

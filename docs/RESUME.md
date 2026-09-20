@@ -4,7 +4,8 @@ Everything here is a number this repo actually produced. Each row names the comm
 regenerates it, because the only thing worse than no metric in an interview is one you
 can't reproduce when asked.
 
-- **Live:** https://3-218-31-157.nip.io
+- **Live:** _(add the Vercel URL here once the Render/Vercel deploy is live — the old EC2 link
+  is dead now that instance is down; don't hand this out with a broken demo link)_
 - **Repo:** https://github.com/colin-110/lumen
 - **Demo login:** `admin@enterprise.ai`
 
@@ -12,8 +13,8 @@ can't reproduce when asked.
 
 ## The header line
 
-> **Lumen — self-hosted RAG document assistant** · Python, FastAPI, Next.js, Qdrant, Celery, Docker, AWS
-> github.com/colin-110/lumen · live at 3-218-31-157.nip.io
+> **Lumen — self-hosted RAG document assistant** · Python, FastAPI, Next.js, Qdrant, Celery, Docker
+> github.com/colin-110/lumen · _(live link — fill in once Render/Vercel is up)_
 
 ---
 

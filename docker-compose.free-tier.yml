@@ -3,16 +3,21 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.free-tier.yml up -d
 #
-# The default stack measures ~1.73GB across nine containers and will not fit.
-# This profile removes the three services that aren't on the critical path for
-# "upload a document, ask a question":
+# The full stack (this profile's services plus grafana/prometheus, i.e. what
+# you get from `docker compose --profile monitoring up`) measures ~1.73GB
+# across nine containers and will not fit. This profile drops one service
+# that's on by default and isn't on the critical path for "upload a document,
+# ask a question":
 #
 #   worker      ~500MB  It loads a second copy of the dense+sparse ONNX models.
 #                       Removed; INGEST_INLINE=true runs ingestion inside the
 #                       API process, reusing the models already loaded there.
-#   grafana     ~173MB  dashboards
-#   prometheus   ~48MB  metrics scraping (/metrics is still exposed, so you can
-#                       scrape it from outside the box if you want it)
+#
+# grafana (~173MB) and prometheus (~48MB) aren't counted above because
+# they're off by default in docker-compose.yml itself now (profiles:
+# ["monitoring"]) — nothing to remove here. /metrics stays exposed either
+# way, so anything external can still scrape the backend without either
+# running.
 #
 # What you give up, honestly:
 #   - Ingestion no longer retries and isn't durable across an API restart. A
@@ -42,14 +47,6 @@ services:
   worker:
     # Compose has no "remove this service" directive; zero replicas is the
     # supported way to drop one without editing the base file.
-    deploy:
-      replicas: 0
-
-  prometheus:
-    deploy:
-      replicas: 0
-
-  grafana:
     deploy:
       replicas: 0
 

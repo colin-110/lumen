@@ -13,10 +13,6 @@ hybrid (dense + sparse) vector retrieval, a Redis-backed semantic cache, multi-p
 fallback, and a streaming chat UI, all running as a fully containerized stack you can bring up with
 one command.
 
-**Live instance:** [3-218-31-157.nip.io](https://3-218-31-157.nip.io) — sign in as
-`admin@enterprise.ai`, upload a document, ask it something. Running on a single AWS
-free-tier instance behind Caddy with automatic TLS, deployed by CI on every push to `main`.
-
 > Built as a from-scratch, end-to-end systems project: backend, retrieval pipeline, frontend,
 > observability, and infra, each verified running before moving to the next.
 
@@ -589,10 +585,9 @@ Notable cases, chosen because they're the ones that would otherwise regress unno
   under the fix it doesn't. A single-document smoke test passes either way, which is
   precisely why the bug survived manual testing.
 
-**Pipeline.** Push to `main` → CI (lint, 100 pytest, 26 vitest, Next build) → on success,
-CD deploys to EC2 over AWS SSM and runs a health smoke test. Deployment uses SSM rather
-than SSH specifically so the instance needs **no inbound port opened** to GitHub's dynamic
-runner IPs. The deploy IAM user is scoped to `ssm:SendCommand` on one instance ARN.
+**Pipeline.** Push to `main` → CI (lint, 100 pytest, 26 vitest, Next build). See "Deploying"
+below for how a green build actually ships — currently the free managed-services path
+(Render + Vercel), not a self-hosted CD pipeline.
 
 ---
 
