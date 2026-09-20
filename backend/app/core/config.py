@@ -205,6 +205,13 @@ class Settings(BaseSettings):
     EMBED_BATCH_SIZE: int = 64
     # Threads fastembed's ONNX runtime may use per worker process.
     ONNX_THREADS: int = 0  # 0 => let onnxruntime decide
+    # onnxruntime pre-allocates a memory arena per session by default, sized
+    # for peak throughput rather than peak RAM. Disabling it makes each of
+    # the three models (dense/sparse/reranker) allocate only what it actually
+    # uses, at the cost of slower heap allocation instead of a pre-warmed
+    # pool. Worth it on a RAM-capped host (e.g. Render's free 512MB) where
+    # the three models loading at once is what OOMs, not query throughput.
+    ONNX_DISABLE_MEM_ARENA: bool = False
 
     CHUNK_SIZE: int = 1000
     CHUNK_OVERLAP: int = 150
