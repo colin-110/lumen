@@ -32,13 +32,25 @@ def _threads() -> int | None:
     return settings.ONNX_THREADS or None
 
 
+def _session_kwargs() -> dict:
+    # enable_cpu_mem_arena is the only session option fastembed exposes
+    # (fastembed/common/onnx_model.py's EXPOSED_SESSION_OPTIONS) - anything
+    # else raises an assertion error, so this dict deliberately has exactly
+    # one possible key.
+    if not settings.ONNX_DISABLE_MEM_ARENA:
+        return {}
+    return {"extra_session_options": {"enable_cpu_mem_arena": False}}
+
+
 def get_dense_model() -> TextEmbedding:
     global _dense
     if _dense is None:
         with _lock:
             if _dense is None:
                 logger.info("Loading dense embedding model %s", settings.DENSE_MODEL)
-                _dense = TextEmbedding(model_name=settings.DENSE_MODEL, threads=_threads())
+                _dense = TextEmbedding(
+                    model_name=settings.DENSE_MODEL, threads=_threads(), **_session_kwargs()
+                )
     return _dense
 
 
@@ -48,7 +60,9 @@ def get_sparse_model() -> SparseTextEmbedding:
         with _lock:
             if _sparse is None:
                 logger.info("Loading sparse embedding model %s", settings.SPARSE_MODEL)
-                _sparse = SparseTextEmbedding(model_name=settings.SPARSE_MODEL, threads=_threads())
+                _sparse = SparseTextEmbedding(
+                    model_name=settings.SPARSE_MODEL, threads=_threads(), **_session_kwargs()
+                )
     return _sparse
 
 
@@ -58,7 +72,9 @@ def get_reranker() -> TextCrossEncoder:
         with _lock:
             if _reranker is None:
                 logger.info("Loading cross-encoder reranker %s", settings.RERANK_MODEL)
-                _reranker = TextCrossEncoder(model_name=settings.RERANK_MODEL, threads=_threads())
+                _reranker = TextCrossEncoder(
+                    model_name=settings.RERANK_MODEL, threads=_threads(), **_session_kwargs()
+                )
     return _reranker
 
 

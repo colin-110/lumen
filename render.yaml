@@ -52,6 +52,13 @@ services:
         value: "1"
       - key: RETRIEVE_CANDIDATES
         value: "20"
+      # Confirmed necessary, not precautionary: this free plan's 512MB OOMed
+      # loading the three ONNX models before this was set. Disables
+      # onnxruntime's pre-allocated memory arena per session so each model
+      # only holds what it actually uses, trading some inference latency for
+      # materially lower peak RSS at load time.
+      - key: ONNX_DISABLE_MEM_ARENA
+        value: "true"
 
       # --- secrets: generated for you ------------------------------------
       - key: SECRET_KEY

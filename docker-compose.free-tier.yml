@@ -64,6 +64,11 @@ services:
       # it to a single intra-op thread here. Unset (0, "let onnxruntime
       # decide") remains the default everywhere else.
       - ONNX_THREADS=1
+      # Confirmed necessary on Render's free 512MB (OOMed loading the three
+      # models without it), not just theoretical here. Disables onnxruntime's
+      # pre-allocated memory arena per session, trading inference latency for
+      # lower peak RSS at model-load time.
+      - ONNX_DISABLE_MEM_ARENA=true
     deploy:
       resources:
         limits:
