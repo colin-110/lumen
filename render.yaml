@@ -17,11 +17,16 @@
 # `sync: false` means "set this in the Render dashboard, not in git" — every
 # such var is a secret or a value unique to your managed-service accounts.
 #
-# Render's free web service plan is 512 MB RAM. This backend measures ~578 MB
-# with every RAM-saving flag below already applied (see README's "Running on
-# a 1GB host" section) — it is close enough to fit but can OOM under load. If
-# it does, the cheapest first thing to try is lowering RETRIEVE_CANDIDATES
-# further (e.g. to 12) before reaching for a paid plan.
+# Render's free web service plan is 512 MB RAM. The 1GB-host numbers in the
+# README ("Running on a 1GB host") don't directly apply here - measured live
+# on this deploy: ONNX_DISABLE_MEM_ARENA alone wasn't enough (OOM loading the
+# third model), RERANK_ENABLED=false was needed on top of it, and even then
+# ingesting a real document OOM'd until EMBED_BATCH_SIZE came down too. All
+# three below are load-bearing, not precautionary - confirmed by an actual
+# crash-loop, not guessed. RETRIEVE_CANDIDATES only affects per-query memory
+# during a request, not model-load or ingestion memory, so it won't help if
+# this still OOMs - EMBED_BATCH_SIZE lower than 8, or a paid plan, are the
+# next real levers.
 services:
   - type: web
     name: lumen-backend
@@ -66,6 +71,16 @@ services:
       # See RERANK_ENABLED's comment in core/config.py for the eval numbers.
       - key: RERANK_ENABLED
         value: "false"
+      # Confirmed necessary too: ingesting a real uploaded document (batches
+      # of 64 chunks through the dense+sparse encoders, on top of the two
+      # models already resident) OOM'd even after the reranker was dropped.
+      # Unlike RERANK_ENABLED, this costs no quality - smaller batches just
+      # mean more, smaller passes through the same models, slower but
+      # identical output. Default (64) stays fine on the free-tier compose
+      # profile, which has real headroom; only this constrained a deploy
+      # needs it this low.
+      - key: EMBED_BATCH_SIZE
+        value: "8"
 
       # --- secrets: generated for you ------------------------------------
       - key: SECRET_KEY
