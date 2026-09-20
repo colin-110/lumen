@@ -167,22 +167,30 @@ def _search_sync(
     if not points:
         return []
 
-    rerank_scores = embeddings.rerank(query, texts)
-    # strict=True: one score per candidate is an invariant of the reranker.
-    # Silently zipping to the shorter list would drop retrieved chunks out of
-    # the context with no error anywhere — the answer would just quietly be
-    # built from less evidence, which is the hardest kind of bug to notice.
-    scored = [
-        RetrievedChunk(
-            chunk_id=str(p.id),
-            document_id=p.payload.get("document_id", ""),
-            filename=p.payload.get("filename", "unknown"),
-            text=p.payload.get("text", ""),
-            score=float(score),
-        )
-        for p, score in zip(points, rerank_scores, strict=True)
-    ]
-    scored.sort(key=lambda c: c.score, reverse=True)
+    if settings.RERANK_ENABLED:
+        rerank_scores = embeddings.rerank(query, texts)
+        # strict=True: one score per candidate is an invariant of the
+        # reranker. Silently zipping to the shorter list would drop retrieved
+        # chunks out of the context with no error anywhere — the answer would
+        # just quietly be built from less evidence, the hardest bug to notice.
+        scored = [
+            RetrievedChunk(
+                chunk_id=str(p.id),
+                document_id=p.payload.get("document_id", ""),
+                filename=p.payload.get("filename", "unknown"),
+                text=p.payload.get("text", ""),
+                score=float(score),
+            )
+            for p, score in zip(points, rerank_scores, strict=True)
+        ]
+        scored.sort(key=lambda c: c.score, reverse=True)
+    else:
+        # Reranker not loaded (RERANK_ENABLED=false). Fall back to RRF fusion
+        # order — Qdrant already returns `points` sorted by fusion score, so
+        # no re-sort needed. MIN_RERANK_SCORE is a cross-encoder logit floor
+        # and doesn't mean anything on RRF's score scale, so skip
+        # select_within_floor too and go straight to a plain top-k.
+        scored = _points_to_chunks(points)
 
     if document_ids:
         # Explicit multi-document scope: the user named these documents, so
@@ -192,7 +200,9 @@ def _search_sync(
         # about would silently make the comparison unanswerable.
         return allocate_fairly(scored, settings.RERANK_TOP_K)
 
-    return select_within_floor(scored)
+    if settings.RERANK_ENABLED:
+        return select_within_floor(scored)
+    return scored[: settings.RERANK_TOP_K]
 
 
 def select_within_floor(scored: list[RetrievedChunk]) -> list[RetrievedChunk]:

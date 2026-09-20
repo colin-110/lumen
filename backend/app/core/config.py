@@ -202,6 +202,13 @@ class Settings(BaseSettings):
     DENSE_DIM: int = 384
     SPARSE_MODEL: str = "Qdrant/bm25"
     RERANK_MODEL: str = "Xenova/ms-marco-MiniLM-L-6-v2"
+    # Off skips loading the cross-encoder entirely (not just skipping the
+    # call) - the third ONNX model resident in memory alongside dense+sparse
+    # is what OOMs a RAM-capped host like Render's free 512MB, so this is a
+    # real functionality trade (own eval numbers: 100% Recall@5 with rerank
+    # vs 95% for BM25 alone; hybrid fusion without rerank falls somewhere
+    # between), made deliberately rather than discovered as a bug later.
+    RERANK_ENABLED: bool = True
     EMBED_BATCH_SIZE: int = 64
     # Threads fastembed's ONNX runtime may use per worker process.
     ONNX_THREADS: int = 0  # 0 => let onnxruntime decide

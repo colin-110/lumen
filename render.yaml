@@ -52,13 +52,20 @@ services:
         value: "1"
       - key: RETRIEVE_CANDIDATES
         value: "20"
-      # Confirmed necessary, not precautionary: this free plan's 512MB OOMed
-      # loading the three ONNX models before this was set. Disables
-      # onnxruntime's pre-allocated memory arena per session so each model
-      # only holds what it actually uses, trading some inference latency for
-      # materially lower peak RSS at load time.
+      # Disables onnxruntime's pre-allocated memory arena per session so each
+      # model only holds what it actually uses, trading some inference
+      # latency for lower peak RSS at load time. Kept even with the reranker
+      # off below - still real headroom for dense+sparse alone.
       - key: ONNX_DISABLE_MEM_ARENA
         value: "true"
+      # Confirmed necessary, not precautionary: 512MB OOMed loading all three
+      # ONNX models even with ONNX_DISABLE_MEM_ARENA above - dense+sparse
+      # alone were already close to the ceiling. This drops the third model
+      # (the cross-encoder reranker) entirely rather than shrinking it,
+      # trading real retrieval quality for actually fitting the free plan.
+      # See RERANK_ENABLED's comment in core/config.py for the eval numbers.
+      - key: RERANK_ENABLED
+        value: "false"
 
       # --- secrets: generated for you ------------------------------------
       - key: SECRET_KEY

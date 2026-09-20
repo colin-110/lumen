@@ -79,11 +79,16 @@ def get_reranker() -> TextCrossEncoder:
 
 
 def warm_up() -> None:
-    """Force all three models to load. Call once at process startup so the
-    first real request isn't the one paying the ~1-2s model-load cost."""
+    """Force the enabled models to load. Call once at process startup so the
+    first real request isn't the one paying the ~1-2s model-load cost.
+
+    Skips the reranker entirely when RERANK_ENABLED=false - the point isn't
+    to skip *calling* it, it's to never hold it resident in memory at all,
+    since it's a whole third ONNX model loaded alongside dense+sparse."""
     get_dense_model()
     get_sparse_model()
-    get_reranker()
+    if settings.RERANK_ENABLED:
+        get_reranker()
 
 
 def embed_dense(texts: list[str]) -> list[list[float]]:
