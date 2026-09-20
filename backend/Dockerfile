@@ -124,9 +124,19 @@ RUN python -c "from app.services import embeddings; embeddings.warm_up()"
 
 EXPOSE 8000
 
+# Migrate before serving, every boot. docker-compose has a dedicated
+# one-shot `migrate` service for this (so it runs once, ahead of `backend`
+# starting) — but platforms with no equivalent of a one-off release phase
+# (e.g. Render's free plan, which also has no shell access to run it by
+# hand) never get a chance to run it at all otherwise. `alembic upgrade
+# head` is a no-op when already current, so this is harmless where the
+# dedicated service already ran it - just redundant, not wrong. Not safe
+# to run from more than one replica at once (no distributed lock here);
+# fine at the single-instance scale this runs at today.
+#
 # One uvicorn worker by default: scale by adding container replicas, not
 # in-process workers — each process loads its own copy of the embedding/
 # reranker models, so extra in-process workers multiply RAM for no
 # throughput win the ASGI event loop wasn't already providing. Override
 # UVICORN_WORKERS for a box with RAM to spare.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS}"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers ${UVICORN_WORKERS}"]
