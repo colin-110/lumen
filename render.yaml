@@ -35,8 +35,13 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      # NOT "true" here on purpose. Strict mode promotes every warning below
+      # to a hard startup failure, including ALLOW_OPEN_REGISTRATION=true --
+      # which is exactly what a public/recruiter-facing demo needs. The
+      # README says as much: don't turn strict mode on for a public demo.
+      # Warnings still print to the Render logs either way.
       - key: STRICT_PRODUCTION_CHECKS
-        value: "true"
+        value: "false"
 
       # --- RAM: same trade-offs as docker-compose.free-tier.yml -----------
       - key: INGEST_INLINE
