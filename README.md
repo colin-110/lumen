@@ -8,6 +8,9 @@
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
+**Live:** [lumen-three-nu.vercel.app](https://lumen-three-nu.vercel.app) — the login form
+pre-fills a demo account with a document already processed, so it's one click to look around.
+
 Lumen is a self-hosted, production-shaped document assistant platform. It combines
 hybrid (dense + sparse) vector retrieval, a Redis-backed semantic cache, multi-provider LLM
 fallback, and a streaming chat UI, all running as a fully containerized stack you can bring up with
