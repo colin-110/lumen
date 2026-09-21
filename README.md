@@ -814,6 +814,13 @@ request (a ~30–60s cold start while the ONNX models reload). A free
 [UptimeRobot](https://uptimerobot.com) monitor pinging `/health` every 5 minutes keeps it warm
 around the clock — that's the "no downtime" half of this setup, and it costs nothing.
 
+**One-click demo login.** For a public link handed to someone who just wants to look around
+(recruiters, reviewers) rather than sign up — set `NEXT_PUBLIC_DEMO_EMAIL` /
+`NEXT_PUBLIC_DEMO_PASSWORD` as Vercel build env vars, pointing at an account you've seeded and
+uploaded a document to already (`python -m scripts.seed` creates `FIRST_SUPERUSER_EMAIL` /
+`FIRST_SUPERUSER_PASSWORD`). The login form pre-fills with those values so the only action needed
+is clicking "Sign in." Unset by default — a normal deployment's login form stays blank.
+
 Gotchas worth knowing before you hit them:
 
 - **Neon's connection string won't paste in as-is.** Its dashboard gives you a libpq-shaped URL

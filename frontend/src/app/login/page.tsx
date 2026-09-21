@@ -7,10 +7,17 @@ import { useAuth } from "@/lib/auth-context";
 import { ApiError } from "@/lib/api-client";
 import { AuthCard, FormField, inputClassName, submitButtonClassName } from "@/components/auth/AuthCard";
 
+// Opt-in only: a deployment sets these two build-time env vars to pre-fill
+// the login form with a demo account's credentials (e.g. so a recruiter can
+// sign in with one click instead of needing credentials handed to them).
+// Empty/unset by default, so a normal deployment's login form stays blank.
+const DEMO_EMAIL = process.env.NEXT_PUBLIC_DEMO_EMAIL ?? "";
+const DEMO_PASSWORD = process.env.NEXT_PUBLIC_DEMO_PASSWORD ?? "";
+
 export default function LoginPage() {
   const { login } = useAuth();
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState(DEMO_EMAIL);
+  const [password, setPassword] = useState(DEMO_PASSWORD);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
