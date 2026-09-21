@@ -50,6 +50,18 @@ def _build_model_list() -> list[dict]:
             litellm_params["api_base"] = settings.OLLAMA_API_BASE or "http://localhost:11434"
         else:
             logger.warning("No API key configured for model %s; it will fail if selected", model)
+
+        if model.startswith("gemini/"):
+            # Google now issues "AQ."-prefixed auth keys by default (replacing
+            # the old AIzaSy... format). litellm's gemini/ prefix is supposed
+            # to route to the stable Google AI Studio API on its own, but with
+            # an AQ. key it silently misroutes to Vertex AI's "express/beta"
+            # endpoint instead - confirmed in production: the same key called
+            # directly against generativelanguage.googleapis.com succeeded
+            # while litellm's call to the same model failed with a
+            # Vertex_ai_betaException 503. Pinning api_base overrides whatever
+            # auto-detection is doing and forces the stable endpoint.
+            litellm_params["api_base"] = "https://generativelanguage.googleapis.com"
         deployments.append({"model_name": MODEL_ALIAS, "litellm_params": litellm_params})
 
     if not deployments:
