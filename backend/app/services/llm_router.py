@@ -2,8 +2,18 @@
 as a separate deployment. This is litellm's documented pattern for
 automatic failover — when the active deployment errors or times out, the
 Router opens a cooldown on it and retries the request against the next
-deployment in the list, all inside a single `acompletion` call. That's a
-real fallback chain (e.g. Gemini -> GPT-4o -> Groq), not just a label.
+deployment in the list, all inside a single `acompletion` call.
+
+That automatic failover only actually fires for 429s and 5xx, though -
+litellm deliberately re-raises most 4xx (auth errors included) straight
+through the streaming path without trying another deployment, on the
+reasoning that a broken-credentials error on one deployment probably means
+the same on the next. True for two deployments of the *same* provider;
+false for our case, where the fallback is a different provider entirely
+with independent credentials. agent.py's generation step handles that gap
+itself with a manual retry loop across PRIMARY_MODEL + FALLBACK_MODELS,
+calling litellm directly rather than through the Router for that hop -
+see the comment there for how this was actually confirmed, not assumed.
 """
 
 from __future__ import annotations
@@ -22,7 +32,7 @@ logger = logging.getLogger(__name__)
 MODEL_ALIAS = "lumen"
 
 
-def _api_key_for(model: str) -> str | None:
+def api_key_for(model: str) -> str | None:
     if model.startswith("gemini/"):
         return settings.GEMINI_API_KEY
     if model.startswith("groq/"):
@@ -43,7 +53,7 @@ def _build_model_list() -> list[dict]:
             continue
         seen.add(model)
         litellm_params: dict = {"model": model}
-        api_key = _api_key_for(model)
+        api_key = api_key_for(model)
         if api_key:
             litellm_params["api_key"] = api_key
         elif model.startswith("ollama"):

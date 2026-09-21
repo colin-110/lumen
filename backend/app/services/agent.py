@@ -27,7 +27,7 @@ from app.core.config import settings
 from app.services import semantic_cache
 from app.services import web_search as web_search_service
 from app.services.llm_errors import classify as classify_llm_error
-from app.services.llm_router import MODEL_ALIAS, get_router
+from app.services.llm_router import MODEL_ALIAS, api_key_for, get_router
 from app.services.retrieval import RetrievedChunk, hybrid_search
 
 logger = logging.getLogger(__name__)
@@ -353,21 +353,66 @@ async def run(
     router = get_router()
     full_text_parts: list[str] = []
     generation_failed = False
-    try:
-        stream = await router.acompletion(
-            model=MODEL_ALIAS,
-            messages=messages,
-            stream=True,
-            temperature=settings.LLM_TEMPERATURE,
-            max_tokens=settings.LLM_MAX_TOKENS,
-        )
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                full_text_parts.append(delta)
-                yield PipelineEvent("token", delta)
-    except Exception as exc:
-        info = classify_llm_error(exc)
+    last_exc: Exception | None = None
+    # PRIMARY_MODEL first (via the Router, which retries/fails-over on its
+    # own for 429s and 5xx), then each FALLBACK_MODELS entry directly via
+    # litellm rather than the Router. Confirmed in production and locally,
+    # not assumed: litellm's streaming path deliberately re-raises most 4xx
+    # (auth errors included - see AuthenticationError, a real one we hit)
+    # without trying another deployment, since on a *single* provider a bad
+    # credential on one deployment usually means the same on the next. Wrong
+    # assumption once the "next deployment" is a different provider with
+    # independent credentials, so that hop needs a call of its own.
+    candidates = [settings.PRIMARY_MODEL, *settings.FALLBACK_MODELS]
+    for attempt, model in enumerate(candidates):
+        if not model:
+            continue
+        attempt_tokens: list[str] = []
+        try:
+            if attempt == 0:
+                stream = await router.acompletion(
+                    model=MODEL_ALIAS,
+                    messages=messages,
+                    stream=True,
+                    temperature=settings.LLM_TEMPERATURE,
+                    max_tokens=settings.LLM_MAX_TOKENS,
+                )
+            else:
+                import litellm  # noqa: PLC0415 - cheap here, get_router() already paid the import cost
+
+                logger.warning(
+                    "Primary model failed with no tokens streamed yet; retrying against "
+                    "fallback %s",
+                    model,
+                )
+                stream = await litellm.acompletion(
+                    model=model,
+                    api_key=api_key_for(model),
+                    messages=messages,
+                    stream=True,
+                    temperature=settings.LLM_TEMPERATURE,
+                    max_tokens=settings.LLM_MAX_TOKENS,
+                )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+                if delta:
+                    attempt_tokens.append(delta)
+                    yield PipelineEvent("token", delta)
+            full_text_parts = attempt_tokens
+            last_exc = None
+            break
+        except Exception as exc:
+            last_exc = exc
+            full_text_parts = attempt_tokens
+            if attempt_tokens:
+                # Only worth trying another model if this attempt streamed
+                # nothing yet - once real content has reached the client,
+                # switching models would append a second, unrelated answer
+                # after a truncated first one instead of a clean failure.
+                break
+
+    if last_exc is not None:
+        info = classify_llm_error(last_exc)
         logger.error("LLM generation failed (%s)", info.kind.value, exc_info=True)
         yield PipelineEvent("token", info.message)
         # Structured so the UI can render quota/rate-limit distinctly from a
