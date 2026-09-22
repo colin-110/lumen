@@ -4,7 +4,7 @@
 ![Python](https://img.shields.io/badge/python-3.12-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
 ![Next.js](https://img.shields.io/badge/Next.js-16-black)
-![Tests](https://img.shields.io/badge/tests-195%20passing-brightgreen)
+![Tests](https://img.shields.io/badge/tests-230%20passing-brightgreen)
 
 **Upload your documents. Ask questions. Get grounded, cited answers — streamed in real time.**
 
@@ -211,10 +211,10 @@ document, and ask it a question.
 |---|---|
 | App | http://localhost:3000 |
 | API docs (Swagger) | http://localhost:8000/api/v1/docs |
-| Grafana | http://localhost:3001 (`admin`/`admin` by default) |
-| Prometheus | http://localhost:9090 |
 | Qdrant dashboard | http://localhost:6333/dashboard |
 | MinIO console | http://localhost:9006 |
+| Grafana | http://localhost:3001 (`admin`/`admin` by default) — off by default, `docker compose --profile monitoring up -d` |
+| Prometheus | http://localhost:9090 — same, opt-in via the `monitoring` profile |
 
 Everything except the app and the API binds to `127.0.0.1` — the datastores are reachable from
 the host for debugging but not from the network.
@@ -353,7 +353,7 @@ loaded, not at idle:
 | frontend | 34 MB / 200 MB |
 | redis | 13 MB / 256 MB |
 
-Test suite: **111 tests** — 85 backend (`pytest`) and 26 frontend (`vitest`), covering JWT/password-hashing correctness, text chunking,
+Test suite: **230 tests** — 204 backend (`pytest`) and 26 frontend (`vitest`), covering JWT/password-hashing correctness, text chunking,
 retrieval-metric maths, LLM-judge output parsing, fair multi-document context allocation, and
 regression coverage for two real bugs — a config-parsing crash on an empty/comma-separated env var,
 and a global top-k selection that dropped a pinned document out of a comparison entirely.
@@ -540,7 +540,7 @@ response includes the system prompt and raw chunk text.
 ## Testing & CI
 
 ```bash
-make test             # pytest (169) + vitest (26)
+make test             # pytest (204) + vitest (26)
 make test-unit        # backend unit tests only — no services needed
 make test-integration # backend integration tests — needs `make up`
 make lint             # ruff (backend) + eslint (frontend)
@@ -548,7 +548,7 @@ make eval-retrieval   # retrieval quality harness — free, no LLM calls
 make eval-generation  # answer quality harness — costs LLM tokens, see "Evaluation" above
 ```
 
-**169 backend + 26 frontend tests across nine layers.** Each targets something that can break
+**204 backend + 26 frontend tests across ten layers.** Each targets something that can break
 silently rather than padding a count with render smoke tests.
 
 | Layer | Count | What it protects |
@@ -558,10 +558,11 @@ silently rather than padding a count with render smoke tests.
 | Unit — evaluation | 13 | Recall@k / MRR / NDCG maths, LLM-judge output parsing |
 | Unit — prompt budget | 9 | History is bounded by characters and not just turn count; request fields are bounded at the edge |
 | Config — production guard | 19 | A default signing key is always fatal; the remaining credential checks warn by default and become fatal under strict mode, so adding a check can't brick a running deployment |
-| Observability | 11 | Metric labels are route templates (not per-UUID series), request ids can't forge log lines, `/metrics` honours its token |
+| Observability | 12 | Metric labels are route templates (not per-UUID series), request ids can't forge log lines, `/metrics` honours its token |
 | Security — tenant isolation | 10 | The Qdrant filter always carries a tenant condition, and caller-supplied `document_ids` narrows it rather than replacing it |
 | Integration — API | 31 | Against a real Postgres: organizations resolve to one tenant, documents are org-visible and owner-deletable, streamed replies persist without leaking connections, sidebar order follows activity, revoked tokens stop working |
 | Concurrency — worker | 5 | Ingestion tasks share one event loop per process, so the DB pool outlives task 1 |
+| Unit — newer coverage | 65 | Added since this table was last updated: client-IP/proxy-header extraction for rate limiting, settings parsing, document parsing, LLM error classification (auth/quota/unavailable), query-rewrite gating, agent context assembly, app-level smoke tests |
 | Frontend — Vitest | 26 | SSE frame parsing, citation numbering, typed error rendering |
 
 The integration layer exists because every defect in the table below lived in a seam a unit test
@@ -588,7 +589,7 @@ Notable cases, chosen because they're the ones that would otherwise regress unno
   under the fix it doesn't. A single-document smoke test passes either way, which is
   precisely why the bug survived manual testing.
 
-**Pipeline.** Push to `main` → CI (lint, 100 pytest, 26 vitest, Next build). See "Deploying"
+**Pipeline.** Push to `main` → CI (lint, 204 pytest, 26 vitest, Next build). See "Deploying"
 below for how a green build actually ships — currently the free managed-services path
 (Render + Vercel), not a self-hosted CD pipeline.
 
@@ -712,24 +713,33 @@ build on the frontend on every push and pull request against `main`.
 <summary>Real <code>pytest</code> output (run against this repo)</summary>
 
 ```
-$ cd backend && poetry run pytest -q
+$ cd backend && poetry run pytest -m "not integration"
 
-tests/test_agent_context.py ......                                 [  6%]
-tests/test_celery_event_loop.py .....                              [ 11%]
-tests/test_chunking.py .....                                       [ 16%]
-tests/test_chunking_structure.py ..........                        [ 26%]
-tests/test_config.py ......                                        [ 32%]
-tests/test_evaluation_judge.py ......                              [ 38%]
-tests/test_evaluation_metrics.py .......                           [ 45%]
-tests/test_llm_errors.py ..............                            [ 59%]
-tests/test_main.py ....                                            [ 63%]
-tests/test_query_rewrite_gate.py .........                         [ 72%]
-tests/test_retrieval_allocation.py ...........                     [ 83%]
-tests/test_security.py .......                                     [ 90%]
-tests/test_tenant_isolation.py ..........                          [100%]
+tests/test_agent_context.py ......                                       [  3%]
+tests/test_celery_event_loop.py .....                                    [  6%]
+tests/test_chunking.py .....                                             [  9%]
+tests/test_chunking_fidelity.py .......                                  [ 13%]
+tests/test_chunking_structure.py ..........                              [ 19%]
+tests/test_client_ip.py .........                                        [ 24%]
+tests/test_config.py ......                                              [ 27%]
+tests/test_document_parser.py .................                          [ 37%]
+tests/test_evaluation_judge.py ......                                    [ 41%]
+tests/test_evaluation_metrics.py .......                                 [ 45%]
+tests/test_history_budget.py .........                                   [ 50%]
+tests/test_llm_errors.py ..............                                  [ 58%]
+tests/test_main.py ....                                                  [ 60%]
+tests/test_observability.py ............                                 [ 67%]
+tests/test_production_config_guard.py ...................                [ 78%]
+tests/test_query_rewrite_gate.py .........                               [ 83%]
+tests/test_retrieval_allocation.py ...........                           [ 90%]
+tests/test_security.py .......                                           [ 94%]
+tests/test_tenant_isolation.py ..........                                [100%]
 
-100 passed in 6.69s
+173 passed, 31 deselected in 10.00s
 ```
+
+The 31 deselected are the integration layer above — they need a real Postgres (`make up`), so this
+command runs everything that doesn't. `make test` runs both.
 
 </details>
 
@@ -754,15 +764,17 @@ cd backend && poetry install && poetry run pytest -q
 # 4. Retrieval quality against the golden dataset — no LLM calls, costs nothing
 make eval-retrieval
 
-# 5. Prometheus is scraping the backend
+# 5. Prometheus is scraping the backend — only if you started with the
+#    monitoring profile (docker compose --profile monitoring up -d);
+#    it's off by default, see the Quickstart table above
 curl -s http://localhost:9090/api/v1/targets | grep -o '"health":"[a-z]*"'
 # -> "health":"up"
 ```
 
 Then in a browser: `http://localhost:3000` → log in with the seeded admin → upload a document →
 watch its status go `Queued` → `Ready` → ask a question about it and confirm the answer cites the
-document you uploaded. `http://localhost:3001` (Grafana) should show live request metrics as you
-click around.
+document you uploaded. With the monitoring profile enabled, `http://localhost:3001` (Grafana)
+should show live request metrics as you click around.
 
 To see the retrieval machinery rather than just its output, upload two documents that disagree
 about something, then: open `/debug` and trace a question to watch the reranker reorder candidates
@@ -804,7 +816,7 @@ deploys are `git push`.
 | Container today | Free managed equivalent |
 |---|---|
 | frontend | [Vercel](https://vercel.com) — set the project root to `frontend/`, add a `NEXT_PUBLIC_API_URL` env var pointing at the backend. Zero-config for Next.js, atomic deploys (no downtime on redeploy). |
-| backend | [Render](https://render.com) free web service, built from `render.yaml` at the repo root (`New +` → `Blueprint`). Free plan is 512 MB RAM against this backend's ~578 MB footprint (see below) — tight but workable for a demo/single user; if it OOMs, lower `RETRIEVE_CANDIDATES` further before reaching for a paid plan. |
+| backend | [Render](https://render.com) free web service, built from `render.yaml` at the repo root (`New +` → `Blueprint`). Free plan is 512 MB RAM against this backend's ~578 MB footprint — tight, and confirmed by an actual deploy, not guessed: it OOMs loading all three ONNX models and again on real document ingestion. `render.yaml` already applies the fix that worked (`RERANK_ENABLED=false` + a smaller `EMBED_BATCH_SIZE`, real quality/speed trade-offs, not the `RETRIEVE_CANDIDATES` tweak you'd expect — that one turned out not to touch either failure mode). |
 | worker | dropped — `render.yaml` sets `INGEST_INLINE=true`, same trade-off as the free-tier profile above |
 | db | [Neon](https://neon.tech) free Postgres. Set `POSTGRES_SSL_MODE=require` (Neon requires TLS; `docker-compose`'s own Postgres does not speak it, so this stays unset there). |
 | redis | [Upstash](https://upstash.com) free Redis (256 MB / 500k commands per month, no card) — copy its `rediss://` URL into `REDIS_URL`. Only backs rate limiting (the semantic cache is Qdrant-backed) and fails open without it, so it's skippable for a private/solo deploy — but worth keeping if `ALLOW_OPEN_REGISTRATION=true` on a public link, since that's exactly the case with no other cap on abuse. |
