@@ -192,7 +192,13 @@ def create_app() -> FastAPI:
 
     app.include_router(metrics_router, tags=["metrics"])
 
-    @app.get("/health", tags=["health"])
+    # GET and HEAD explicitly: unlike plain Starlette, FastAPI's APIRoute
+    # does not auto-add HEAD to a GET route (confirmed by reading
+    # fastapi.routing.APIRoute.__init__ - it overwrites self.methods
+    # without Starlette Route's "if GET in methods, add HEAD" step). A
+    # monitor that pings with HEAD (UptimeRobot does) would get a 405 and
+    # report the service down, even though it's genuinely healthy.
+    @app.api_route("/health", methods=["GET", "HEAD"], tags=["health"])
     async def health_check():
         return {"status": "ok", "version": settings.VERSION, "environment": settings.ENVIRONMENT}
 
