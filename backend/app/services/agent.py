@@ -378,7 +378,9 @@ async def run(
                     max_tokens=settings.LLM_MAX_TOKENS,
                 )
             else:
-                import litellm  # noqa: PLC0415 - cheap here, get_router() already paid the import cost
+                # Cheap here specifically: get_router() (attempt 0, above)
+                # already paid litellm's ~9s import cost this process.
+                import litellm
 
                 logger.warning(
                     "Primary model failed with no tokens streamed yet; retrying against "
