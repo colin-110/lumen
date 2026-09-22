@@ -154,16 +154,38 @@ async def debug_retrieval(
         ),
         None,
     )
-    _, reranked = await add_stage(
-        "reranked",
-        "Cross-encoder rerank",
-        f"{settings.RERANK_MODEL} scores each candidate against the query jointly, rather than comparing "
-        "two independently-computed vectors. This is the step that fixes fusion's ordering.",
-        lambda: retrieval.hybrid_search_reranked(
-            search_query, org_str, owner_str, STAGE_LIMIT, doc_ids
-        ),
-        fused,
-    )
+    if settings.RERANK_ENABLED:
+        _, reranked = await add_stage(
+            "reranked",
+            "Cross-encoder rerank",
+            f"{settings.RERANK_MODEL} scores each candidate against the query jointly, rather than "
+            "comparing two independently-computed vectors. This is the step that fixes fusion's ordering.",
+            lambda: retrieval.hybrid_search_reranked(
+                search_query, org_str, owner_str, STAGE_LIMIT, doc_ids
+            ),
+            fused,
+        )
+    else:
+        # RERANK_ENABLED=false means the reranker was never loaded at boot
+        # (production chat skips it too - see agent.py/retrieval.py). This
+        # endpoint used to call hybrid_search_reranked unconditionally
+        # regardless of that setting, which tried to lazy-load the model on
+        # a host that deliberately never made room for it, and OOM-killed
+        # the container. Show the fusion order unchanged instead of
+        # crashing - it's the true answer to "what did reranking do here."
+        stages.append(
+            DebugStage(
+                key="reranked",
+                label="Cross-encoder rerank",
+                description=(
+                    "Skipped — RERANK_ENABLED=false on this deployment (the model is never loaded, "
+                    "to fit this host's RAM). Order below is unchanged from fusion."
+                ),
+                duration_ms=0.0,
+                chunks=fused,
+            )
+        )
+        reranked = fused
     selected_description = (
         f"Scoped to {len(doc_ids)} pinned document(s): the {settings.RERANK_TOP_K}-chunk budget is "
         "filled round-robin so every pinned document contributes its best chunk before any "
