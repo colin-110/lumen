@@ -1,16 +1,16 @@
 # Lumen
 
-A self-hosted document assistant that combines hybrid retrieval, semantic caching, multi-provider LLM fallback, and streaming answers with source citations.
+Self-hosted document assistant combining hybrid retrieval, semantic caching, asynchronous ingestion, multi-provider LLM fallback, and streaming answers with source citations.
 
 [Live demo](https://lumen-three-nu.vercel.app)
 
 ![Lumen chat](docs/screenshot-chat.png)
 
-## What it does
+## Problem
 
-Users upload documents and ask questions against them. Lumen retrieves relevant passages using dense and sparse search, reranks candidates, and streams a grounded answer with citations back to the source chunks.
+A document QA system needs more than an LLM call. Retrieval quality, ingestion latency, cache behavior, tenant isolation, and failure handling all affect the backend's correctness and user experience.
 
-The system also supports multi-document questions, organization-level data isolation, asynchronous document ingestion, OCR fallback for scanned PDFs, and a retrieval debugger.
+Lumen treats retrieval as an observable pipeline rather than a black box.
 
 ## Architecture
 
@@ -31,8 +31,8 @@ The system also supports multi-document questions, organization-level data isola
              |           |
              v           v
           Redis       Qdrant
-       cache/rate     hybrid
-         limits      retrieval
+       cache/rate     retrieval
+         limits
              |           |
              +-----+-----+
                    |
@@ -42,7 +42,7 @@ The system also supports multi-document questions, organization-level data isola
               streamed answer
 ~~~
 
-Document ingestion runs asynchronously through Celery:
+Document ingestion runs asynchronously:
 
 ~~~text
 Upload -> parse -> chunk -> embed -> index
@@ -51,21 +51,16 @@ Upload -> parse -> chunk -> embed -> index
                      +-> Qdrant
 ~~~
 
-## Key engineering work
+## Engineering decisions
 
-- Hybrid dense + BM25 retrieval fused with Reciprocal Rank Fusion.
-- Cross-encoder reranking for retrieval precision.
-- Conversational query rewriting for follow-up questions.
-- Redis/Qdrant semantic cache for near-duplicate queries.
-- Streaming LLM responses over SSE.
-- Multi-provider LLM fallback through LiteLLM.
-- Celery-based asynchronous document ingestion.
-- OCR fallback for scanned PDF pages.
-- JWT access/refresh authentication with bcrypt.
-- Organization-level document isolation.
-- Prometheus metrics and Grafana dashboards.
-- Golden-dataset retrieval evaluation using Recall@k, MRR, and NDCG.
-- Retrieval debugger showing rewrite, cache, retrieval, fusion, reranking, and prompt stages.
+- **Hybrid retrieval:** combine dense retrieval with BM25 and fuse rankings with Reciprocal Rank Fusion.
+- **Cross-encoder reranking:** improve ordering of retrieved candidates before generation.
+- **Semantic caching:** avoid repeating expensive work for near-duplicate queries.
+- **SSE streaming:** return generated output incrementally instead of waiting for the complete response.
+- **Celery ingestion:** move document parsing, embedding, and indexing off the request path.
+- **Tenant isolation:** enforce organization-level document boundaries in the backend.
+- **Retrieval evaluation:** measure Recall@k, MRR, and NDCG against a fixed golden dataset.
+- **Observability:** expose Prometheus metrics and a retrieval debugger for pipeline inspection.
 
 ## Tech stack
 
@@ -89,11 +84,11 @@ cd lumen
 docker compose up --build
 ~~~
 
-See the repository configuration and environment files for provider credentials and service settings.
+Configure the required provider credentials and service settings using the repository's environment configuration.
 
-## Why this project is interesting
+## What I focused on
 
-The goal was not simply to make a chatbot. The system makes retrieval behavior observable and measurable: every stage from query rewriting through reranking can be inspected, and retrieval changes can be evaluated against a fixed dataset instead of judged only by subjective answers.
+The main engineering goal was to make retrieval behavior measurable and debuggable. The system exposes the stages from query rewriting through caching, retrieval, fusion, reranking, and generation so changes can be evaluated systematically rather than judged only from a few manual prompts.
 
 ## License
 
