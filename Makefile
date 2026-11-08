@@ -1,8 +1,7 @@
 .PHONY: up down build logs migrate seed install-backend install-frontend setup test test-unit test-integration lint format eval-retrieval eval-generation lock
 
 # docker compose (v2 plugin), not the standalone docker-compose (v1, EOL since
-# 2023 and absent from current Docker installs). scripts/deploy.sh already
-# used v2; these targets had drifted.
+# 2023 and absent from current Docker installs).
 COMPOSE := docker compose
 
 # `up` no longer needs a follow-up `make migrate`: the compose stack has a

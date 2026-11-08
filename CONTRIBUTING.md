@@ -5,7 +5,7 @@ First off, thank you for considering contributing to Lumen! It's people like you
 ## Development Workflow
 
 1. **Fork & Clone**: Fork the repository and clone it locally.
-2. **Setup**: Run the `setup.ps1` script to initialize your `.env` files.
+2. **Setup**: Run `make setup` to initialize your `.env` files.
 3. **Install Dependencies**: 
    - Backend: `cd backend && poetry install`
    - Frontend: `cd frontend && npm install`

@@ -27,8 +27,6 @@ frontend/next-env.d.ts
 .DS_Store
 Thumbs.db
 
-# --- Claude Code session state (not part of the app) ---
-.claude/
 
 # --- logs / local artifacts ---
 *.log
