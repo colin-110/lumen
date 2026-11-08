@@ -36,6 +36,9 @@ class Document(Base, TimestampMixin):
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     chunk_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     storage_key: Mapped[str] = mapped_column(String(1024), nullable=False)
+    # SHA-256 of the uploaded bytes, for duplicate detection. Nullable because
+    # rows from before the column existed have no hash to backfill from.
+    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     doc_metadata: Mapped[dict] = mapped_column("metadata", JSONB, default=dict, nullable=False)
 
     owner_id: Mapped[uuid.UUID] = mapped_column(

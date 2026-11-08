@@ -12,6 +12,7 @@ run it via `asyncio.to_thread` so it never blocks the event loop.
 
 from __future__ import annotations
 
+import functools
 import logging
 import threading
 
@@ -97,10 +98,6 @@ def embed_dense(texts: list[str]) -> list[list[float]]:
     ]
 
 
-def embed_dense_one(text: str) -> list[float]:
-    return embed_dense([text])[0]
-
-
 def embed_sparse(texts: list[str]) -> list[dict]:
     results = []
     for vec in get_sparse_model().embed(texts, batch_size=settings.EMBED_BATCH_SIZE):
@@ -108,8 +105,49 @@ def embed_sparse(texts: list[str]) -> list[dict]:
     return results
 
 
+# --- single-query embeddings, memoized -------------------------------------
+# A chat question that misses the semantic cache is embedded three times with
+# identical input: cache lookup, retrieval, cache store. Users also re-ask the
+# same question (and the retrieval debugger re-runs it). These are bounded,
+# per-process LRUs keyed on the exact text; values are stored as tuples so a
+# caller mutating its result can't corrupt the cached copy. Bulk ingestion
+# goes through `embed_dense`/`embed_sparse` above and never touches them, so
+# document chunks can't evict query vectors.
+
+
+@functools.lru_cache(maxsize=max(settings.QUERY_EMBED_CACHE_SIZE, 1))
+def _dense_one_cached(text: str) -> tuple[float, ...]:
+    return tuple(embed_dense([text])[0])
+
+
+@functools.lru_cache(maxsize=max(settings.QUERY_EMBED_CACHE_SIZE, 1))
+def _sparse_one_cached(text: str) -> tuple[tuple[int, ...], tuple[float, ...]]:
+    vec = embed_sparse([text])[0]
+    return tuple(vec["indices"]), tuple(vec["values"])
+
+
+def embed_dense_one(text: str) -> list[float]:
+    if settings.QUERY_EMBED_CACHE_SIZE <= 0:
+        return embed_dense([text])[0]
+    return list(_dense_one_cached(text))
+
+
 def embed_sparse_one(text: str) -> dict:
-    return embed_sparse([text])[0]
+    if settings.QUERY_EMBED_CACHE_SIZE <= 0:
+        return embed_sparse([text])[0]
+    indices, values = _sparse_one_cached(text)
+    return {"indices": list(indices), "values": list(values)}
+
+
+def query_embed_cache_info() -> dict[str, int]:
+    """Hit/miss counters, for tests and debugging."""
+    dense, sparse = _dense_one_cached.cache_info(), _sparse_one_cached.cache_info()
+    return {
+        "dense_hits": dense.hits,
+        "dense_misses": dense.misses,
+        "sparse_hits": sparse.hits,
+        "sparse_misses": sparse.misses,
+    }
 
 
 def rerank(query: str, documents: list[str]) -> list[float]:

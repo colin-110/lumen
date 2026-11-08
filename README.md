@@ -56,11 +56,20 @@ Upload -> parse -> chunk -> embed -> index
 - **Hybrid retrieval:** combine dense retrieval with BM25 and fuse rankings with Reciprocal Rank Fusion.
 - **Cross-encoder reranking:** improve ordering of retrieved candidates before generation.
 - **Semantic caching:** avoid repeating expensive work for near-duplicate queries.
+- **Content-addressed uploads:** uploads are SHA-256 hashed; identical bytes return the existing document instead of being stored, embedded and indexed again (which would also flush the tenant's answer cache).
+- **Idempotent ingestion:** chunk ids derive from (document, position), so a retried Celery task overwrites instead of duplicating chunks, and failed documents can be reprocessed from storage without re-uploading.
+- **Query-embedding memoization:** a bounded per-process LRU means a question is embedded once, not separately for cache lookup, retrieval and cache write.
 - **SSE streaming:** return generated output incrementally instead of waiting for the complete response.
 - **Celery ingestion:** move document parsing, embedding, and indexing off the request path.
 - **Tenant isolation:** enforce organization-level document boundaries in the backend.
 - **Retrieval evaluation:** measure Recall@k, MRR, and NDCG against a fixed golden dataset.
 - **Observability:** expose Prometheus metrics and a retrieval debugger for pipeline inspection.
+
+## Screenshots
+
+| Documents | Retrieval debugger |
+|---|---|
+| ![Documents](docs/screenshot-documents.png) | ![Retrieval debugger](docs/screenshot-debugger.png) |
 
 ## Tech stack
 

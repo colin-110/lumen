@@ -362,6 +362,18 @@ async def hybrid_search_reranked(
     return await asyncio.to_thread(_sync)
 
 
+def chunk_point_id(document_id: uuid.UUID | str, position: int) -> str:
+    """Deterministic Qdrant id for the `position`-th chunk of a document.
+
+    Ids used to be random, so a Celery retry after a partial upsert (batch 3
+    of 5 times out) re-inserted batches 1-2 under fresh ids: the document
+    ended up with duplicate chunks that crowded distinct evidence out of the
+    top-k. Deriving the id from (document, position) makes re-indexing an
+    overwrite instead of an append.
+    """
+    return str(uuid.uuid5(uuid.UUID(str(document_id)), f"chunk:{position}"))
+
+
 def _upsert_sync(
     document_id: uuid.UUID,
     filename: str,
@@ -378,10 +390,12 @@ def _upsert_sync(
     # strict=True for the same reason as the rerank zip above: a length
     # mismatch here would mean chunks were never indexed, so the document
     # would look ingested while part of it was silently missing from search.
-    for text, dense, sparse in zip(chunks, dense_vecs, sparse_vecs, strict=True):
+    for position, (text, dense, sparse) in enumerate(
+        zip(chunks, dense_vecs, sparse_vecs, strict=True)
+    ):
         points.append(
             models.PointStruct(
-                id=str(uuid.uuid4()),
+                id=chunk_point_id(document_id, position),
                 vector={
                     DENSE_VECTOR_NAME: dense,
                     SPARSE_VECTOR_NAME: models.SparseVector(

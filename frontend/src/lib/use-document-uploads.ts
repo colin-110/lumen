@@ -30,7 +30,7 @@ export function useDocumentUploads() {
           .uploadDocument(file, (pct) => {
             setUploads((prev) => prev.map((u) => (u.key === key ? { ...u, progress: pct } : u)));
           })
-          .then(async () => {
+          .then(async (doc) => {
             // Refetch the document list *before* dropping the progress chip.
             // Removing it first left a gap of a second or more where the upload
             // had vanished from the UI but the new document hadn't arrived in
@@ -39,7 +39,16 @@ export function useDocumentUploads() {
             // chip to the real row.
             await queryClient.invalidateQueries({ queryKey: ["documents"] });
             setUploads((prev) => prev.filter((u) => u.key !== key));
-            push(`${file.name} uploaded — processing started`, "success");
+            if (doc.duplicate) {
+              push(
+                doc.filename === file.name
+                  ? `${file.name} is already in your library — nothing re-uploaded`
+                  : `${file.name} is identical to ${doc.filename} — nothing re-uploaded`,
+                "success"
+              );
+            } else {
+              push(`${file.name} uploaded — processing started`, "success");
+            }
           })
           .catch((err) => {
             const message = err instanceof Error ? err.message : "Upload failed";

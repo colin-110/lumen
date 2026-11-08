@@ -28,6 +28,9 @@ export interface DocumentItem {
   organization_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Upload responses only: the bytes matched an existing document, which is
+   * what was returned instead of a new one. */
+  duplicate?: boolean;
 }
 
 export interface ChatSource {

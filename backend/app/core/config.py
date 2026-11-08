@@ -210,6 +210,10 @@ class Settings(BaseSettings):
     # between), made deliberately rather than discovered as a bug later.
     RERANK_ENABLED: bool = True
     EMBED_BATCH_SIZE: int = 64
+    # Per-process LRU of single-query embeddings (see embeddings.py). A cache
+    # miss in chat embeds the same question for cache lookup, retrieval and
+    # cache store; this makes the second and third free. 0 disables it.
+    QUERY_EMBED_CACHE_SIZE: int = 1024
     # Threads fastembed's ONNX runtime may use per worker process.
     ONNX_THREADS: int = 0  # 0 => let onnxruntime decide
     # onnxruntime pre-allocates a memory arena per session by default, sized

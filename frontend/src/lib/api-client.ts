@@ -216,6 +216,11 @@ export async function deleteDocument(id: string): Promise<void> {
   await apiFetch(`/documents/${id}`, { method: "DELETE" });
 }
 
+/** Retry ingestion of a failed document from the copy already in storage. */
+export async function reprocessDocument(id: string): Promise<DocumentItem> {
+  return apiJson<DocumentItem>(`/documents/${id}/reprocess`, { method: "POST" });
+}
+
 export function uploadDocument(
   file: File,
   onProgress?: (pct: number) => void

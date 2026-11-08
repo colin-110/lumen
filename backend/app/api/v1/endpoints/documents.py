@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+import hashlib
 import logging
 import uuid
 from typing import Any
@@ -12,6 +14,7 @@ from fastapi import (
     HTTPException,
     Query,
     Request,
+    Response,
     UploadFile,
     status,
 )
@@ -22,7 +25,7 @@ from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
 from app.crud.crud_document import document as crud_document
 from app.db.session import get_db
-from app.models.document import DocumentStatus
+from app.models.document import Document, DocumentStatus
 from app.models.user import User
 from app.schemas.document import DocumentCreate, DocumentRead, DocumentUpdate
 from app.services import semantic_cache
@@ -61,66 +64,11 @@ async def _read_bounded(file: UploadFile, limit: int) -> bytes:
     return b"".join(chunks)
 
 
-@router.post("/upload", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
-async def upload_document(
-    request: Request,
-    background_tasks: BackgroundTasks,
-    file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(deps.get_current_active_user),
-) -> Any:
-    """Upload a document; parsing/embedding happens asynchronously via Celery."""
-    await enforce_rate_limit(f"upload:{current_user.id}", settings.RATE_LIMIT_UPLOAD_PER_MINUTE)
-
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="Filename missing")
-
-    # Reject on the declared length first when the client provides one, so an
-    # oversized upload is refused before its body is transferred at all.
-    declared = request.headers.get("Content-Length")
-    if declared and declared.isdigit() and int(declared) > settings.MAX_UPLOAD_BYTES:
-        raise HTTPException(
-            status_code=413,
-            detail=f"File exceeds the {settings.MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit",
-        )
-
-    suffix = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-    if suffix not in ALLOWED_EXTENSIONS:
-        raise HTTPException(
-            status_code=415,
-            detail=f"Unsupported file type '{suffix}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
-        )
-
-    content = await _read_bounded(file, settings.MAX_UPLOAD_BYTES)
-    file_size = len(content)
-    if file_size == 0:
-        raise HTTPException(status_code=400, detail="Uploaded file is empty")
-
-    doc_id = uuid.uuid4()
-    object_name = f"{current_user.organization_id or current_user.id}/{doc_id}/{file.filename}"
-
-    doc_in = DocumentCreate(
-        id=doc_id,
-        filename=file.filename,
-        file_type=file.content_type or suffix.lstrip("."),
-        file_size=file_size,
-        storage_key=object_name,
-        owner_id=current_user.id,
-        organization_id=current_user.organization_id,
-    )
-    doc = await crud_document.create(db, obj_in=doc_in)
-
-    uploaded = await storage.upload_file(content, object_name, file.content_type)
-    if not uploaded:
-        await crud_document.update(
-            db,
-            db_obj=doc,
-            obj_in=DocumentUpdate(
-                status=DocumentStatus.FAILED, error_message="Storage upload failed"
-            ),
-        )
-        raise HTTPException(status_code=502, detail="Failed to store document")
-
+async def _enqueue_ingestion(
+    db: AsyncSession, doc: Document, background_tasks: BackgroundTasks
+) -> None:
+    """Hand a stored document to ingestion: Celery, or inline when there is
+    no worker. Shared by upload and reprocess so both fail the same way."""
     try:
         if settings.INGEST_INLINE:
             # Small-footprint mode: no Celery worker process to hand off to, so
@@ -148,6 +96,90 @@ async def upload_document(
             detail="Document stored but processing could not be queued. Please retry.",
         ) from exc
 
+
+@router.post("/upload", response_model=DocumentRead, status_code=status.HTTP_201_CREATED)
+async def upload_document(
+    request: Request,
+    response: Response,
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Upload a document; parsing/embedding happens asynchronously via Celery.
+
+    Identical bytes already in the tenant's library are not stored or indexed
+    again: the existing document comes back with `duplicate: true` and a 200.
+    """
+    await enforce_rate_limit(f"upload:{current_user.id}", settings.RATE_LIMIT_UPLOAD_PER_MINUTE)
+
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Filename missing")
+
+    # Reject on the declared length first when the client provides one, so an
+    # oversized upload is refused before its body is transferred at all.
+    declared = request.headers.get("Content-Length")
+    if declared and declared.isdigit() and int(declared) > settings.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {settings.MAX_UPLOAD_BYTES // (1024 * 1024)}MB limit",
+        )
+
+    suffix = "." + file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
+    if suffix not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{suffix}'. Allowed: {', '.join(sorted(ALLOWED_EXTENSIONS))}",
+        )
+
+    content = await _read_bounded(file, settings.MAX_UPLOAD_BYTES)
+    file_size = len(content)
+    if file_size == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+
+    # A duplicate would cost a second stored object, a full parse + embed, a
+    # second copy of every chunk competing for the same top-k slots, and a
+    # wipe of the tenant's semantic cache — all to learn nothing new.
+    # Off the event loop: hashing a max-size upload takes long enough to stall
+    # every in-flight chat stream if done inline.
+    content_hash = await asyncio.to_thread(lambda: hashlib.sha256(content).hexdigest())
+    existing = await crud_document.get_by_hash_for_tenant(
+        db,
+        content_hash=content_hash,
+        owner_id=current_user.id,
+        organization_id=current_user.organization_id,
+    )
+    if existing is not None:
+        response.status_code = status.HTTP_200_OK
+        return DocumentRead.model_validate(existing).model_copy(update={"duplicate": True})
+
+    doc_id = uuid.uuid4()
+    object_name = f"{current_user.organization_id or current_user.id}/{doc_id}/{file.filename}"
+
+    doc_in = DocumentCreate(
+        id=doc_id,
+        filename=file.filename,
+        file_type=file.content_type or suffix.lstrip("."),
+        file_size=file_size,
+        storage_key=object_name,
+        content_hash=content_hash,
+        owner_id=current_user.id,
+        organization_id=current_user.organization_id,
+    )
+    doc = await crud_document.create(db, obj_in=doc_in)
+
+    uploaded = await storage.upload_file(content, object_name, file.content_type)
+    if not uploaded:
+        await crud_document.update(
+            db,
+            db_obj=doc,
+            obj_in=DocumentUpdate(
+                status=DocumentStatus.FAILED, error_message="Storage upload failed"
+            ),
+        )
+        raise HTTPException(status_code=502, detail="Failed to store document")
+
+    await _enqueue_ingestion(db, doc, background_tasks)
     return doc
 
 
@@ -212,3 +244,44 @@ async def delete_document(
         str(doc.id),
     )
     await crud_document.remove(db, db_obj=doc)
+
+
+@router.post("/{document_id}/reprocess", response_model=DocumentRead)
+async def reprocess_document(
+    document_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(deps.get_current_active_user),
+) -> Any:
+    """Retry ingestion of a FAILED document from the copy already in storage.
+
+    Most failures are transient (broker down, Qdrant timeout after Celery's
+    retries ran out), and the bytes are still in object storage — making the
+    user find and re-upload the original file was pure friction.
+    """
+    await enforce_rate_limit(f"upload:{current_user.id}", settings.RATE_LIMIT_UPLOAD_PER_MINUTE)
+
+    doc = await crud_document.get_for_tenant(
+        db, id=document_id, owner_id=current_user.id, organization_id=current_user.organization_id
+    )
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc.owner_id != current_user.id:
+        raise HTTPException(
+            status_code=403, detail="Only the person who uploaded this document can reprocess it"
+        )
+    if doc.status != DocumentStatus.FAILED:
+        # Completed: nothing to fix. Pending/processing: already in flight, and
+        # a second task would race the first over the same points.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Only failed documents can be reprocessed (status: {doc.status.value})",
+        )
+
+    doc = await crud_document.update(
+        db,
+        db_obj=doc,
+        obj_in=DocumentUpdate(status=DocumentStatus.PENDING, error_message=None, chunk_count=0),
+    )
+    await _enqueue_ingestion(db, doc, background_tasks)
+    return doc

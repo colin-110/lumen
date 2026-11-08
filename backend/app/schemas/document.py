@@ -15,6 +15,7 @@ class DocumentCreate(BaseModel):
     file_type: str
     file_size: int
     storage_key: str
+    content_hash: str | None = None
     owner_id: uuid.UUID
     organization_id: uuid.UUID | None = None
     status: DocumentStatus = DocumentStatus.PENDING
@@ -41,3 +42,6 @@ class DocumentRead(BaseModel):
     organization_id: uuid.UUID | None = None
     created_at: datetime
     updated_at: datetime
+    # Set only on an upload response: true when the bytes matched a document
+    # this tenant already has, and that existing document is what's returned.
+    duplicate: bool = False

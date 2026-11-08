@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, File, Trash2 } from "lucide-react";
+import { AlertTriangle, File, RotateCw, Trash2 } from "lucide-react";
 import * as api from "@/lib/api-client";
 import { useAuth } from "@/lib/auth-context";
 import { useToast } from "@/lib/toast-context";
@@ -31,6 +32,25 @@ export function DocumentsView() {
       return stillWorking ? 2500 : false;
     },
   });
+
+  const [retrying, setRetrying] = useState<Set<string>>(new Set());
+
+  const handleRetry = async (doc: DocumentItem) => {
+    setRetrying((prev) => new Set(prev).add(doc.id));
+    try {
+      await api.reprocessDocument(doc.id);
+      await queryClient.invalidateQueries({ queryKey: ["documents"] });
+      push(`Reprocessing ${doc.filename}`, "success");
+    } catch (err) {
+      push(err instanceof Error ? err.message : "Could not reprocess document", "error");
+    } finally {
+      setRetrying((prev) => {
+        const next = new Set(prev);
+        next.delete(doc.id);
+        return next;
+      });
+    }
+  };
 
   const handleDelete = async (doc: DocumentItem) => {
     if (!confirm(`Delete "${doc.filename}"? This removes it from the knowledge base.`)) return;
@@ -120,6 +140,17 @@ export function DocumentsView() {
                       a colleague's uploads. Only the owner may delete one —
                       the API enforces it with a 403; hiding the control here
                       keeps the UI from offering an action that always fails. */}
+                  {doc.owner_id === user?.id && doc.status === "failed" && (
+                    <button
+                      onClick={() => handleRetry(doc)}
+                      disabled={retrying.has(doc.id)}
+                      className="p-2 rounded-lg text-muted-foreground hover:bg-surface-hover hover:text-foreground transition-colors shrink-0 disabled:opacity-50"
+                      aria-label={`Retry processing ${doc.filename}`}
+                      title="Retry processing"
+                    >
+                      <RotateCw size={15} className={retrying.has(doc.id) ? "animate-spin" : undefined} />
+                    </button>
+                  )}
                   {doc.owner_id === user?.id && (
                     <button
                       onClick={() => handleDelete(doc)}

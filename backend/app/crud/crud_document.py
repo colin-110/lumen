@@ -5,7 +5,7 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.document import Document
+from app.models.document import Document, DocumentStatus
 from app.schemas.document import DocumentCreate, DocumentUpdate
 
 
@@ -59,6 +59,30 @@ class CRUDDocument:
             .limit(limit)
         )
         return list(result.scalars().all())
+
+    async def get_by_hash_for_tenant(
+        self,
+        db: AsyncSession,
+        content_hash: str,
+        owner_id: uuid.UUID,
+        organization_id: uuid.UUID | None,
+    ) -> Document | None:
+        """The tenant's live copy of these exact bytes, if any.
+
+        FAILED rows are skipped: matching one would hand the user back a
+        broken document instead of giving the new upload a fresh attempt.
+        """
+        result = await db.execute(
+            select(Document)
+            .where(
+                Document.content_hash == content_hash,
+                Document.status != DocumentStatus.FAILED,
+                self._tenant_clause(owner_id, organization_id),
+            )
+            .order_by(Document.created_at.asc())
+            .limit(1)
+        )
+        return result.scalars().first()
 
     async def count_for_tenant(
         self, db: AsyncSession, owner_id: uuid.UUID, organization_id: uuid.UUID | None

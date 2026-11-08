@@ -15,6 +15,7 @@ from app.schemas.document import DocumentUpdate
 from app.services import retrieval, semantic_cache
 from app.services.chunking import split_text
 from app.services.document_parser import UnsupportedDocumentError, extract_text
+from app.services.qdrant_client import delete_document_points
 from app.services.storage import storage
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,11 @@ async def _process_document(document_id: str) -> None:
             chunks = split_text(
                 text, chunk_size=settings.CHUNK_SIZE, chunk_overlap=settings.CHUNK_OVERLAP
             )
+            # Clear whatever a previous attempt left behind. Point ids are
+            # deterministic, so same-size re-indexing overwrites in place, but
+            # a reprocess under different chunk settings could produce fewer
+            # chunks and leave the old tail answering questions.
+            await delete_document_points(str(doc.id))
             chunk_count = await retrieval.index_chunks(
                 document_id=doc.id,
                 filename=doc.filename,
