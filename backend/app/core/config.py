@@ -165,8 +165,8 @@ class Settings(BaseSettings):
     # Run document ingestion inside the API process instead of dispatching to
     # a Celery worker. The worker is a second process that loads its own copy
     # of the dense + sparse ONNX models (~500MB measured), which is the single
-    # largest line item when trying to fit this stack on a 1GB host such as an
-    # AWS free-tier t3.micro — see docker-compose.free-tier.yml.
+    # largest line item on a small host such as Render's free 512MB plan —
+    # see render.yaml.
     #
     # The trade is real and you should not enable this under load: Celery gives
     # bounded concurrency, retries with backoff (acks_late), and durability if

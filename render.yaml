@@ -1,5 +1,5 @@
 # Render Blueprint for the backend only — the free managed-services deploy
-# path documented in README.md under "Deploying". Frontend goes to Vercel
+# path. Frontend goes to Vercel
 # separately (zero-config for Next.js, no blueprint needed); Postgres/Qdrant/
 # object storage are managed elsewhere (Neon/Qdrant Cloud/R2) and wired in
 # below as vars you fill in on first deploy.
@@ -17,9 +17,7 @@
 # `sync: false` means "set this in the Render dashboard, not in git" — every
 # such var is a secret or a value unique to your managed-service accounts.
 #
-# Render's free web service plan is 512 MB RAM. The 1GB-host numbers in the
-# README ("Running on a 1GB host") don't directly apply here - measured live
-# on this deploy: ONNX_DISABLE_MEM_ARENA alone wasn't enough (OOM loading the
+# Render's free web service plan is 512 MB RAM. Measured live on this deploy: ONNX_DISABLE_MEM_ARENA alone wasn't enough (OOM loading the
 # third model), RERANK_ENABLED=false was needed on top of it, and even then
 # ingesting a real document OOM'd until EMBED_BATCH_SIZE came down too. All
 # three below are load-bearing, not precautionary - confirmed by an actual
@@ -48,7 +46,7 @@ services:
       - key: STRICT_PRODUCTION_CHECKS
         value: "false"
 
-      # --- RAM: same trade-offs as docker-compose.free-tier.yml -----------
+      # --- RAM: fit the models into 512MB --------------------------------
       - key: INGEST_INLINE
         value: "true"
       - key: UVICORN_WORKERS
@@ -76,9 +74,8 @@ services:
       # models already resident) OOM'd even after the reranker was dropped.
       # Unlike RERANK_ENABLED, this costs no quality - smaller batches just
       # mean more, smaller passes through the same models, slower but
-      # identical output. Default (64) stays fine on the free-tier compose
-      # profile, which has real headroom; only this constrained a deploy
-      # needs it this low.
+      # identical output. The default (64) is fine anywhere with real
+      # headroom; only this constrained a deploy needs it this low.
       - key: EMBED_BATCH_SIZE
         value: "8"
 

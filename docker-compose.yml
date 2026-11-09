@@ -1,7 +1,31 @@
+# Shared by migrate, backend and worker: one image, one config.
+x-backend: &backend
+  image: lumen-backend:latest
+  env_file:
+    - backend/.env
+  environment: &backend-env
+    # Overridable so a real deployment can set ENVIRONMENT=production in
+    # backend/.env; a hardcoded value here would silently win over the file.
+    ENVIRONMENT: ${ENVIRONMENT:-local}
+    POSTGRES_SERVER: db
+    REDIS_URL: redis://redis:6379/0
+    CELERY_BROKER_URL: redis://redis:6379/1
+    QDRANT_URL: http://qdrant:6333
+    S3_ENDPOINT_URL: http://minio:9000
+  depends_on: &backend-deps
+    # migrate itself waits on a healthy db, so db is covered transitively.
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+    qdrant:
+      condition: service_started
+    minio:
+      condition: service_healthy
+
 services:
   db:
     image: postgres:15.10
-    container_name: enterprise_ai_db
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
@@ -22,12 +46,8 @@ services:
 
   redis:
     image: redis:7.4.1
-    container_name: enterprise_ai_redis
-    # Host port remapped to 6380 to avoid clashing with a Redis instance
-    # that might already be running on the host; containers still talk to
-    # each other over the standard 6379 on the internal docker network.
-    # Also doubles as the Celery broker/result backend (DB 1) — no
-    # separate message broker service needed.
+    # Host port 6380 avoids clashing with a Redis already on the host. Also
+    # the Celery broker (DB 1), so no separate message broker is needed.
     ports:
       - "127.0.0.1:6380:6379"
     volumes:
@@ -43,13 +63,9 @@ services:
           memory: 256m
 
   qdrant:
-    # Pin forward, never backward. Qdrant's storage format is not
-    # backward-compatible: a volume written by 1.19 makes an older binary
-    # panic on startup ("invalid type: sequence, expected a map"), which is
-    # exactly what pinning this to v1.12.4 did to a running deployment. Check
-    # `docker exec <c> /qdrant/qdrant --version` before changing it.
+    # Pin forward, never backward: Qdrant's storage format is not backward
+    # compatible, and an older binary panics on a volume a newer one wrote.
     image: qdrant/qdrant:v1.19.0
-    container_name: enterprise_ai_qdrant
     ports:
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
@@ -61,19 +77,13 @@ services:
           memory: 512m
 
   minio:
-    # Same rule as qdrant above — MinIO refuses to start against a data
-    # directory written by a newer release ("Unknown xl meta version 3").
-    #
-    # quay.io, not Docker Hub: MinIO archived the open-source edition and
-    # pulled every minio/minio tag from Docker Hub (~2026-09-16) - the exact
-    # same images are still published at quay.io/minio/minio, tag-for-tag.
+    # Same pin-forward rule as qdrant. quay.io because MinIO pulled its
+    # images from Docker Hub; the tags are identical there.
     image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    container_name: enterprise_ai_minio
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
     command: server /data --console-address ":9001"
-    # Host ports remapped (9005/9006) for the same reason as redis above.
     ports:
       - "127.0.0.1:9005:9000"
       - "127.0.0.1:9006:9001"
@@ -89,22 +99,12 @@ services:
         limits:
           memory: 256m
 
-  # Runs `alembic upgrade head` once and exits. The backend waits on it
-  # completing successfully, so `docker compose up` on a fresh checkout gives
-  # a working stack — previously migrations only ran via a separate, undocumented
-  # command (`make migrate`, host-side, needs a local Poetry install), so a
-  # plain `docker compose up` booted the API against an empty database and
-  # every request 500'd until you knew to run it.
+  # Runs `alembic upgrade head` once and exits; backend and worker wait on it,
+  # so a plain `docker compose up` on a fresh checkout gives a working stack.
   migrate:
+    <<: *backend
     build: ./backend
-    image: lumen-backend:latest
-    container_name: enterprise_ai_migrate
     command: ["alembic", "upgrade", "head"]
-    env_file:
-      - backend/.env
-    environment:
-      - ENVIRONMENT=${ENVIRONMENT:-local}
-      - POSTGRES_SERVER=db
     depends_on:
       db:
         condition: service_healthy
@@ -115,41 +115,16 @@ services:
           memory: 512m
 
   backend:
+    <<: *backend
     build: ./backend
-    image: lumen-backend:latest
-    container_name: enterprise_ai_backend
     ports:
       - "8000:8000"
-    env_file:
-      - backend/.env
     environment:
-      # Overridable so a real deployment can set ENVIRONMENT=production in
-      # backend/.env; a hardcoded value here silently wins over the env file.
-      - ENVIRONMENT=${ENVIRONMENT:-local}
-      - POSTGRES_SERVER=db
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - QDRANT_URL=http://qdrant:6333
-      - S3_ENDPOINT_URL=http://minio:9000
-      # Scale via replicas, not in-process workers — one model copy per
-      # process, so this is the biggest single lever on backend RAM. Bump
-      # this (and add more CPU) for real production traffic.
-      - UVICORN_WORKERS=${UVICORN_WORKERS:-1}
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-      minio:
-        condition: service_healthy
+      <<: *backend-env
+      # Scale with replicas, not in-process workers: each worker loads its own
+      # copy of the models, so this is the biggest single lever on RAM.
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
     healthcheck:
-      # The interpreter is already in the image; curl was a second HTTP client
-      # installed solely for this line, and apt-installing it pulled libcurl
-      # and its dependencies into the runtime layer.
       test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health', timeout=4).status == 200 else 1)"]
       interval: 10s
       timeout: 5s
@@ -161,54 +136,24 @@ services:
           memory: 900m
 
   worker:
-    # Reuses the backend service's build instead of building its own
-    # near-identical ~1.7GB image from the same Dockerfile/deps — only the
-    # `command` differs, so one built image serves both roles.
-    image: lumen-backend:latest
-    container_name: enterprise_ai_worker
+    <<: *backend
     command: ["celery", "-A", "app.core.celery_app", "worker", "--loglevel=info", "--concurrency=2", "-Q", "ingestion"]
-    env_file:
-      - backend/.env
-    environment:
-      # Overridable so a real deployment can set ENVIRONMENT=production in
-      # backend/.env; a hardcoded value here silently wins over the env file.
-      - ENVIRONMENT=${ENVIRONMENT:-local}
-      - POSTGRES_SERVER=db
-      - REDIS_URL=redis://redis:6379/0
-      - CELERY_BROKER_URL=redis://redis:6379/1
-      - QDRANT_URL=http://qdrant:6333
-      - S3_ENDPOINT_URL=http://minio:9000
-    depends_on:
-      migrate:
-        condition: service_completed_successfully
-      db:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-      minio:
-        condition: service_healthy
     deploy:
       resources:
         limits:
-          # Measured at ~697MB against a 700m cap after ingesting a handful of
-          # documents — i.e. essentially at the ceiling, where the next large
-          # PDF gets the container OOM-killed mid-task. Celery's acks_late
-          # would requeue it, so it would retry and die again rather than fail
-          # loudly. 900m matches the backend and leaves real headroom.
+          # Measured ~697MB after a handful of documents; a tighter cap gets
+          # it OOM-killed mid-task, and acks_late would retry it into the
+          # same wall.
           memory: 900m
 
   frontend:
     build:
       context: ./frontend
       args:
+        # NEXT_PUBLIC_* is inlined at build time, so it's a build arg only.
         NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
-    container_name: enterprise_ai_frontend
     ports:
       - "3000:3000"
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000/api/v1
     depends_on:
       backend:
         condition: service_healthy
@@ -217,13 +162,11 @@ services:
         limits:
           memory: 200m
 
+  # Monitoring is opt-in: `docker compose --profile monitoring up`.
+  # /metrics stays exposed either way for any external scraper.
   prometheus:
-    # Off by default — set COMPOSE_PROFILES=monitoring (in .env, or inline)
-    # to bring these two up. /metrics stays exposed either way, so anything
-    # external can still scrape the backend without this stack running.
     profiles: ["monitoring"]
     image: prom/prometheus:v3.0.1
-    container_name: enterprise_ai_prometheus
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
@@ -237,17 +180,12 @@ services:
           memory: 200m
 
   grafana:
-    # See the profiles note on prometheus above — same toggle covers both.
     profiles: ["monitoring"]
-    # grafana-oss excludes the bundled enterprise plugins/features this
-    # project never uses — meaningfully smaller image for the same
-    # dashboards, since only Prometheus is wired up as a datasource here.
     image: grafana/grafana-oss:11.4.0
-    container_name: enterprise_ai_grafana
     environment:
-      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
-      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
-      - GF_USERS_ALLOW_SIGN_UP=false
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_PASSWORD:-admin}
+      GF_USERS_ALLOW_SIGN_UP: "false"
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
