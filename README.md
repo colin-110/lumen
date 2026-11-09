@@ -85,15 +85,36 @@ Upload -> parse -> chunk -> embed -> index
 
 ## Run locally
 
-The complete stack is containerized.
+Requires Docker with the Compose plugin, and an API key for at least one LLM provider (a free [Gemini key](https://aistudio.google.com/apikey) works).
 
 ~~~bash
 git clone https://github.com/colin-110/lumen.git
 cd lumen
-docker compose up --build
+make setup                      # creates backend/.env and frontend/.env.local
+# edit backend/.env and set GEMINI_API_KEY (or another provider's key)
+docker compose up --build -d    # migrations run automatically on first start
+make seed                       # creates the admin account from backend/.env
 ~~~
 
-Configure the required provider credentials and service settings using the repository's environment configuration.
+| Service | URL |
+|---|---|
+| App | http://localhost:3000 |
+| API docs | http://localhost:8000/docs |
+| MinIO console | http://localhost:9006 |
+| Grafana (with `--profile monitoring`) | http://localhost:3001 |
+
+Sign in with `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` from `backend/.env`, or register a new account.
+
+## Tests and evaluation
+
+These run on the host: install dependencies first with `make install-backend install-frontend` (Poetry, Python 3.12, Node 20).
+
+~~~bash
+make test-unit         # backend unit tests, no services needed
+make test              # full backend suite (needs Postgres + Redis) and frontend tests
+make lint
+make eval-retrieval    # Recall@k, MRR and NDCG against the golden dataset
+~~~
 
 ## What I focused on
 

@@ -37,8 +37,9 @@ lock:
 migrate:
 	$(COMPOSE) run --rm migrate
 
+# Runs inside the backend container, so no local Python setup is needed.
 seed:
-	cd backend && poetry run python -m scripts.seed
+	$(COMPOSE) exec backend python -m scripts.seed
 
 # Unit tests only — no services required.
 test-unit:

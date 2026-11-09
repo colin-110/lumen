@@ -3,6 +3,7 @@ name = "lumen-backend"
 version = "1.0.0"
 description = "Lumen document assistant — backend"
 authors = ["Colin Thomas <colinkthomas110@gmail.com>"]
+license = "Apache-2.0"
 packages = [{include = "app"}]
 
 [tool.poetry.dependencies]
