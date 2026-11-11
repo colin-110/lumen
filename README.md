@@ -54,7 +54,9 @@ Upload -> parse -> chunk -> embed -> index
 ## Engineering decisions
 
 - **Hybrid retrieval:** combine dense retrieval with BM25 and fuse rankings with Reciprocal Rank Fusion.
-- **Cross-encoder reranking:** improve ordering of retrieved candidates before generation.
+- **Late-interaction reranking (ColBERT):** token vectors are computed once at ingestion and Qdrant ranks candidates by MaxSim at query time, so no model re-reads them per question. A cross-encoder remains available as a setting.
+- **Figure verification:** every number in an answer is checked against the passage it cites; statements whose figures aren't in their source are flagged in the UI.
+- **Automatic comparison scoping:** a question that names two or more documents ("does the Northwind invoice match the services agreement?") is restricted to them with a fair share of context each, without the user picking them.
 - **Semantic caching:** avoid repeating expensive work for near-duplicate queries.
 - **Content-addressed uploads:** uploads are SHA-256 hashed; identical bytes return the existing document instead of being stored, embedded and indexed again (which would also flush the tenant's answer cache).
 - **Idempotent ingestion:** chunk ids derive from (document, position), so a retried Celery task overwrites instead of duplicating chunks, and failed documents can be reprocessed from storage without re-uploading.
@@ -70,6 +72,17 @@ Upload -> parse -> chunk -> embed -> index
 | Documents | Retrieval debugger |
 |---|---|
 | ![Documents](docs/screenshot-documents.png) | ![Retrieval debugger](docs/screenshot-debugger.png) |
+
+## Measured
+
+Retrieval on the golden set (22 questions, 17 documents, 2 CPU threads, `make eval-retrieval`):
+
+| Reranking | Recall@5 | Recall@10 | MRR | NDCG@10 | Latency |
+|---|---|---|---|---|---|
+| Cross-encoder | 100% | 100% | 0.95 | 0.97 | 1,222 ms |
+| ColBERT late interaction | 98% | 100% | 0.98 | 0.98 | 25 ms |
+
+The trade-off is at ingestion: ColBERT roughly doubles indexing time and raises peak memory during uploads (whole stack ~1.8 GB vs ~1.3 GB under a three-document load test), while question-time memory stays flat.
 
 ## Tech stack
 
