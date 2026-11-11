@@ -1,0 +1,8 @@
+# HTTPS in front of the API. LUMEN_DOMAIN is <elastic-ip>.nip.io, which
+# resolves to the server, so Let's Encrypt can issue a certificate for it.
+{$LUMEN_DOMAIN} {
+	reverse_proxy backend:8000 {
+		# Chat answers stream over SSE; send each token as it arrives.
+		flush_interval -1
+	}
+}

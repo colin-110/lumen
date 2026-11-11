@@ -1,0 +1,78 @@
+# Single-server overlay for the AWS deployment (deploy/aws/lumen.yml):
+#   docker compose -f docker-compose.yml -f deploy/aws/docker-compose.aws.yml up -d
+#
+# The frontend runs on Vercel and documents are ingested inside the API
+# process, so neither the frontend nor the Celery worker run here. Settings
+# below are the low-memory ones measured for a 2 GB host.
+
+services:
+  backend:
+    restart: unless-stopped
+    ports: !reset []
+    environment:
+      INGEST_INLINE: "true"
+      ONNX_DISABLE_MEM_ARENA: "true"
+      EMBED_BATCH_SIZE: "16"
+      ONNX_THREADS: "2"
+      TRUSTED_PROXY_HEADERS: "true"
+    deploy:
+      resources:
+        limits:
+          memory: 1500m
+
+  migrate:
+    deploy:
+      resources:
+        limits:
+          memory: 384m
+
+  db:
+    restart: unless-stopped
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          memory: 256m
+
+  redis:
+    restart: unless-stopped
+    ports: !reset []
+    command: ["redis-server", "--maxmemory", "64mb", "--maxmemory-policy", "allkeys-lru", "--save", ""]
+    deploy:
+      resources:
+        limits:
+          memory: 128m
+
+  qdrant:
+    restart: unless-stopped
+    ports: !reset []
+
+  caddy:
+    image: caddy:2.10.2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      LUMEN_DOMAIN: ${LUMEN_DOMAIN}
+    volumes:
+      - ./deploy/aws/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      backend:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 64m
+
+  # Not run on this host.
+  worker:
+    profiles: ["worker"]
+  frontend:
+    profiles: ["frontend"]
+
+volumes:
+  caddy_data:
+  caddy_config:
