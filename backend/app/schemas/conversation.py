@@ -67,3 +67,7 @@ class ChatResponse(BaseModel):
     sources: list[ChatSource]
     cached: bool = False
     latency_ms: int
+    # Filenames retrieval was restricted to because the question named them.
+    auto_scoped: list[str] = []
+    # Per-claim check of every figure against its cited source (grounding.py).
+    verification: dict | None = None

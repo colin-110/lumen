@@ -14,11 +14,14 @@ from app.api import deps
 from app.core.config import settings
 from app.core.rate_limit import enforce_rate_limit
 from app.crud.crud_conversation import conversation as crud_conversation
+from app.crud.crud_document import document as crud_document
 from app.db.session import AsyncSessionLocal, get_db
 from app.models.conversation import Conversation, MessageRole
+from app.models.document import DocumentStatus
 from app.models.user import User
 from app.schemas.conversation import ChatRequest, ChatResponse, ChatSource
 from app.services import agent as agent_service
+from app.services.document_mentions import named_documents
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +53,31 @@ async def _load_conversation(
         agent_service.ChatMessage(role=m.role.value, content=m.content) for m in convo.messages
     ]
     return convo, history
+
+
+async def _resolve_scope(
+    db: AsyncSession, user: User, request: ChatRequest
+) -> tuple[list[str] | None, list[str]]:
+    """Documents to restrict retrieval to, and the names of any auto-picked.
+
+    An explicit selection from the picker always wins. Otherwise, a question
+    that names two or more of the tenant's documents ("does the Northwind
+    invoice match the services agreement?") is scoped to them, the same as if
+    the user had picked them, because an open search for a comparison misses
+    the clauses being compared. One named document is left unscoped: the
+    answer may well live elsewhere.
+    """
+    if request.document_ids:
+        return [str(d) for d in request.document_ids], []
+    docs = await crud_document.get_multi_for_tenant(
+        db, owner_id=user.id, organization_id=user.organization_id, limit=200
+    )
+    ready = [(str(d.id), d.filename) for d in docs if d.status == DocumentStatus.COMPLETED]
+    named = set(named_documents(request.message, ready))
+    if len(named) < 2 or len(named) > settings.MAX_PINNED_DOCUMENTS:
+        return None, []
+    picked = [(i, f) for i, f in ready if i in named]
+    return [i for i, _ in picked], [f for _, f in picked]
 
 
 async def _persist_assistant_message(
@@ -111,8 +139,9 @@ async def chat(
     text_parts: list[str] = []
     cached = False
     latency_ms = 0
+    verification: dict | None = None
 
-    doc_ids = [str(d) for d in request.document_ids] if request.document_ids else None
+    doc_ids, auto_scoped = await _resolve_scope(db, current_user, request)
 
     async for event in agent_service.run(
         request.message, history, current_user.organization_id, current_user.id, doc_ids
@@ -124,6 +153,8 @@ async def chat(
         elif event.type == "done":
             cached = event.data.get("cached", False)
             latency_ms = event.data.get("latency_ms", 0)
+        elif event.type == "verification":
+            verification = event.data
 
     full_text = "".join(text_parts)
     await crud_conversation.add_message(
@@ -143,6 +174,8 @@ async def chat(
         sources=[ChatSource(**s) for s in sources],
         cached=cached,
         latency_ms=latency_ms,
+        auto_scoped=auto_scoped,
+        verification=verification,
     )
 
 
@@ -166,13 +199,15 @@ async def chat_stream(
     conversation_id = convo.id
     organization_id = current_user.organization_id
     owner_id = current_user.id
-    doc_ids = [str(d) for d in request.document_ids] if request.document_ids else None
+    doc_ids, auto_scoped = await _resolve_scope(db, current_user, request)
 
     async def event_generator():
         def frame(event_type: str, data: Any) -> str:
             return f"data: {json.dumps({'type': event_type, 'data': data}, default=str)}\n\n"
 
         yield frame("conversation", {"conversation_id": str(conversation_id)})
+        if auto_scoped:
+            yield frame("scope", {"filenames": auto_scoped, "auto": True})
 
         sources: list[dict] = []
         text_parts: list[str] = []
@@ -194,6 +229,8 @@ async def chat_stream(
                     latency_ms = event.data.get("latency_ms", 0)
                 elif event.type == "error":
                     yield frame("error", event.data)
+                elif event.type == "verification":
+                    yield frame("verification", event.data)
         finally:
             full_text = "".join(text_parts)
             if full_text:

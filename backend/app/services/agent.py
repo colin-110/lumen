@@ -27,6 +27,7 @@ from typing import Any, Literal
 from app.core.config import settings
 from app.services import semantic_cache
 from app.services import web_search as web_search_service
+from app.services.grounding import verify_figures
 from app.services.llm_errors import classify as classify_llm_error
 from app.services.llm_router import MODEL_ALIAS, api_key_for, get_router
 from app.services.retrieval import RetrievedChunk, hybrid_search
@@ -73,7 +74,7 @@ class SourceRef:
 
 @dataclass
 class PipelineEvent:
-    type: Literal["sources", "token", "done", "error"]
+    type: Literal["sources", "token", "done", "error", "verification"]
     data: Any = None
 
 
@@ -455,6 +456,11 @@ async def run(
         generation_failed = True
 
     full_text = "".join(full_text_parts)
+
+    # Citation [n] is chunks[n - 1]: _build_sources numbers them from 1.
+    if full_text and chunks and not generation_failed:
+        yield PipelineEvent("verification", verify_figures(full_text, [c.text for c in chunks]))
+
     latency_ms = int((time.perf_counter() - start) * 1000)
 
     # Never store a scoped answer: it was produced from a caller-chosen subset
