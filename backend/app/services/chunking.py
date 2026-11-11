@@ -44,6 +44,12 @@ _HEADING_PATTERNS = (
 # A heading is a short standalone line. Anything longer is prose that merely
 # happens to start with a number ("1990 was the year the company ...").
 _MAX_HEADING_CHARS = 90
+# Numbered headings are titles ("3. Payment Terms"); a numbered line longer
+# than this is a list item ("1. Managed data warehouse service, monthly ...").
+_MAX_NUMBERED_HEADING_WORDS = 8
+# Dot leaders ("......") and money amounts ("4,500.00") mark table rows and
+# invoice line items, never headings.
+_TABLE_ROW = re.compile(r"\.{3,}|\d[\d,]*\.\d{2}\b")
 
 
 def _is_heading(line: str) -> bool:
@@ -54,6 +60,13 @@ def _is_heading(line: str) -> bool:
     if not is_markdown and stripped.endswith((".", ",", ";", ":")):
         # Sentences end in punctuation, headings generally don't; a trailing
         # colon is a label ("Note:"), which is prose for our purposes.
+        return False
+    if _TABLE_ROW.search(stripped):
+        # Treating invoice line items as headings split "LINE ITEMS" off as an
+        # empty section and gave every line its own one-line chunk, so the
+        # amounts competed for context slots as fragments and lost.
+        return False
+    if re.match(r"^\s{0,3}\d", stripped) and len(stripped.split()) > _MAX_NUMBERED_HEADING_WORDS:
         return False
     return any(p.match(stripped) for p in _HEADING_PATTERNS)
 

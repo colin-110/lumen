@@ -198,7 +198,11 @@ def _search_sync(
         # letting the longest crowd the others out. The floor is intentionally
         # not applied here — excluding a document the user explicitly asked
         # about would silently make the comparison unanswerable.
-        return allocate_fairly(scored, settings.RERANK_TOP_K)
+        # A larger budget than an open question gets: picking documents is an
+        # explicit request to compare them, and with 6 slots shared by two
+        # documents a contract's fee clause lost its place to boilerplate, so
+        # "does the invoice match the contract?" was answered without prices.
+        return allocate_fairly(scored, settings.SCOPED_RERANK_TOP_K)
 
     if settings.RERANK_ENABLED:
         return select_within_floor(scored)

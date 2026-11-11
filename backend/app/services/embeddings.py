@@ -153,4 +153,8 @@ def query_embed_cache_info() -> dict[str, int]:
 def rerank(query: str, documents: list[str]) -> list[float]:
     if not documents:
         return []
-    return list(get_reranker().rerank(query, documents))
+    # Small batches: the cross-encoder's working memory grows with batch size,
+    # and fastembed's default (64) scores every candidate at once. Measured on
+    # 40 candidates: +739 MiB at 40, +153 MiB at 8, identical scores, and
+    # slightly faster. This one step decided whether the API fits in 1GB.
+    return list(get_reranker().rerank(query, documents, batch_size=settings.RERANK_BATCH_SIZE))

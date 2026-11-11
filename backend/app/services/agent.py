@@ -16,10 +16,11 @@ use case just as well.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -254,6 +255,27 @@ async def _rewrite_query(query: str, history: list[ChatMessage]) -> str:
         return query
 
 
+async def _idle_timeout(stream: AsyncIterable[Any], seconds: float) -> AsyncIterator[Any]:
+    """Re-yield `stream`, raising TimeoutError if no chunk arrives for `seconds`.
+
+    The provider timeout (LLM_TIMEOUT) bounds the request, not a stream that
+    connects and then goes quiet. A model under load did exactly that: HTTP
+    200, then nothing, and the chat request hung for minutes with the spinner
+    up and the fallback model never tried. Turning the stall into an
+    exception routes it through the normal failure path, so a fallback gets
+    its turn when nothing has been streamed yet.
+    """
+    iterator = stream.__aiter__()
+    while True:
+        try:
+            chunk = await asyncio.wait_for(iterator.__anext__(), timeout=seconds)
+        except StopAsyncIteration:
+            return
+        except TimeoutError as exc:
+            raise TimeoutError(f"LLM stream stalled: no output for {seconds}s") from exc
+        yield chunk
+
+
 def _history_within_budget(history: list[ChatMessage]) -> list[ChatMessage]:
     """Trim history to the most recent turns that fit the character budget.
 
@@ -395,7 +417,7 @@ async def run(
                     temperature=settings.LLM_TEMPERATURE,
                     max_tokens=settings.LLM_MAX_TOKENS,
                 )
-            async for chunk in stream:
+            async for chunk in _idle_timeout(stream, settings.LLM_STREAM_IDLE_TIMEOUT):
                 delta = chunk.choices[0].delta.content if chunk.choices else None
                 if delta:
                     attempt_tokens.append(delta)

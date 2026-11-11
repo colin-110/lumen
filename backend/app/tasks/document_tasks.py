@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import tempfile
 import uuid
@@ -131,9 +132,25 @@ async def ingest_document_inline(document_id: str) -> None:
     re-upload, rather than silently disappearing.
     """
     try:
-        await _process_document(document_id)
+        # Queue behind any ingestion already running in this process. Each
+        # concurrent document holds its own parse + embedding working set, so
+        # three simultaneous uploads measured ~1.9GB peak against ~0.5GB idle;
+        # one at a time keeps the peak to a single document's worth, which is
+        # what lets this mode fit a small server.
+        async with _inline_slots():
+            await _process_document(document_id)
     except Exception:
         logger.error("Inline ingestion failed for document %s", document_id, exc_info=True)
+
+
+_inline_semaphore: asyncio.Semaphore | None = None
+
+
+def _inline_slots() -> asyncio.Semaphore:
+    global _inline_semaphore
+    if _inline_semaphore is None:
+        _inline_semaphore = asyncio.Semaphore(max(settings.INGEST_INLINE_CONCURRENCY, 1))
+    return _inline_semaphore
 
 
 @celery_app.task(bind=True, max_retries=3, default_retry_delay=10, acks_late=True)

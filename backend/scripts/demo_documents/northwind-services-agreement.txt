@@ -1,0 +1,24 @@
+MASTER SERVICES AGREEMENT
+Between Acme Corp ("Client") and Northwind Analytics Ltd ("Provider")
+Agreement number: MSA-2026-017. Signed 20 February 2026.
+
+1. SERVICES
+Provider will host, maintain and support the Client's data warehouse, including daily backups, monitoring, and up to 20 hours per month of analyst support.
+
+2. TERM
+The agreement starts on 1 March 2026 and runs for 12 months, ending 28 February 2027. It renews for further 12-month periods unless either party gives 60 days' written notice.
+
+3. FEES
+The monthly service fee is 4,200 USD, fixed for the initial 12-month term. Additional analyst support beyond 20 hours is billed at 140 USD per hour, with prior written approval from the Client. No other charges apply unless agreed in writing.
+
+4. INVOICING AND PAYMENT
+Provider invoices monthly in advance on the 1st of each month. Payment terms are net 30 days from the invoice date. Late payments accrue interest at 1.0% per month.
+
+5. SERVICE LEVELS
+Provider guarantees 99.9% monthly availability. For each full 0.1% below the target, the Client receives a 5% credit on that month's fee, up to a maximum of 25%.
+
+6. TERMINATION
+Either party may terminate for material breach with 30 days' written notice if the breach is not fixed in that period.
+
+7. CONTACTS
+Client: procurement@acme.example. Provider: billing@northwind.example.

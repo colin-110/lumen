@@ -31,6 +31,26 @@ class TestHeadingDetection:
         assert _is_heading("PAYMENT TERMS")
         assert _is_heading("Section 4")
 
+    def test_invoice_line_items_are_not_headings(self):
+        assert not _is_heading(
+            "1. Managed data warehouse service, monthly fee ........ 4,500.00 USD"
+        )
+        assert not _is_heading("3. Platform upgrade fee (one-off) ......... 350.00 USD")
+        assert not _is_heading("TOTAL DUE ......... 5,690.00 USD")
+        assert not _is_heading("1. Provider will host and maintain the warehouse for the client")
+
+    def test_line_items_stay_with_their_section(self):
+        invoice = (
+            "INVOICE INV-1\n\nLINE ITEMS\n"
+            "1. Managed data warehouse service, monthly fee ........ 4,500.00 USD\n"
+            "2. Additional analyst support, 6 hours at 140 USD ....... 840.00 USD\n\n"
+            "PAYMENT TERMS\nNet 15 days."
+        )
+        chunks = split_text(invoice, chunk_size=1000, chunk_overlap=0)
+        items = [c for c in chunks if "4,500.00" in c]
+        assert len(items) == 1 and "840.00" in items[0] and items[0].startswith("LINE ITEMS")
+        assert "LINE ITEMS" not in chunks  # no heading-only fragment
+
     def test_prose_is_not_mistaken_for_a_heading(self):
         # Starts with a number but is a sentence.
         assert not _is_heading("1990 was the year the company was founded.")

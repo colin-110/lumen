@@ -52,6 +52,14 @@ class Settings(BaseSettings):
     FIRST_SUPERUSER_EMAIL: str = "admin@enterprise.ai"
     FIRST_SUPERUSER_PASSWORD: str = INSECURE_SUPERUSER_PASSWORD
     FIRST_ORG_NAME: str = "Acme Corp"
+    # Optional shared demo account (scripts/seed.py), for a public deployment
+    # whose login page is pre-filled with it. Leave unset to skip it.
+    DEMO_USER_EMAIL: str | None = None
+    DEMO_USER_PASSWORD: str | None = None
+    # Upload the sample documents in scripts/demo_documents when seeding,
+    # through the API at SEED_API_URL (inside the backend container: :8000).
+    SEED_DEMO_DOCUMENTS: bool = False
+    SEED_API_URL: str = "http://localhost:8000/api/v1"
 
     # Scrape guard for /metrics. Unset means the endpoint is open, which is
     # only acceptable on a private network.
@@ -173,6 +181,9 @@ class Settings(BaseSettings):
     # the API restarts mid-ingest. Inline ingestion gives none of that; a crash
     # during processing leaves the document stuck in PROCESSING.
     INGEST_INLINE: bool = False
+    # How many documents inline ingestion processes at once. Peak memory scales
+    # with it; 1 is right for a small single-server deployment.
+    INGEST_INLINE_CONCURRENCY: int = 1
 
     @computed_field
     @property
@@ -190,6 +201,10 @@ class Settings(BaseSettings):
     # See the REDIS_URL comment above — 9005 matches this repo's MinIO port
     # remap in docker-compose.yml; the backend/worker containers override
     # this to http://minio:9000 (the container-to-container address).
+    # "local" stores uploads on disk under LOCAL_STORAGE_DIR (one-server
+    # deployments); "s3" uses the S3_* settings below (AWS S3, R2, ...).
+    STORAGE_BACKEND: Literal["s3", "local"] = "s3"
+    LOCAL_STORAGE_DIR: str = "/data/documents"
     S3_ENDPOINT_URL: str | None = "http://localhost:9005"
     S3_ACCESS_KEY: str = "minioadmin"
     S3_SECRET_KEY: str = "minioadmin"
@@ -228,6 +243,11 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 150
     RETRIEVE_CANDIDATES: int = 40  # pulled from Qdrant before reranking
     RERANK_TOP_K: int = 6  # handed to the LLM after reranking
+    # Context budget when the user picks specific documents to compare.
+    SCOPED_RERANK_TOP_K: int = 12
+    # Candidates scored per cross-encoder pass. Peak memory scales with it;
+    # see embeddings.rerank for the measurements.
+    RERANK_BATCH_SIZE: int = 8
     MIN_RERANK_SCORE: float = -6.0  # cross-encoder logit floor
     # Floor never trims below this. The cross-encoder scores anything that
     # isn't a direct answer steeply negative, so on broad questions the floor
@@ -250,9 +270,15 @@ class Settings(BaseSettings):
     GROQ_API_KEY: str | None = None
     OLLAMA_API_BASE: str | None = None
 
-    PRIMARY_MODEL: str = "gemini/gemini-flash-latest"
+    # flash-lite rather than flash: on the free tier the full flash alias was
+    # measured hanging for minutes under demand while flash-lite answered in
+    # about 1.5s. Pair it with a FALLBACK_MODELS entry for when it is busy.
+    PRIMARY_MODEL: str = "gemini/gemini-flash-lite-latest"
     FALLBACK_MODELS: Annotated[list[str], NoDecode] = []
     LLM_TIMEOUT: int = 90
+    # Seconds a streaming answer may go without any output before it counts
+    # as failed and the next fallback model is tried. See agent._idle_timeout.
+    LLM_STREAM_IDLE_TIMEOUT: int = 30
     LLM_MAX_RETRIES: int = 2
     LLM_TEMPERATURE: float = 0.2
     LLM_MAX_TOKENS: int = 2048
@@ -363,7 +389,7 @@ class Settings(BaseSettings):
             )
         if self.POSTGRES_PASSWORD == "postgres":
             warnings_.append("POSTGRES_PASSWORD is still the default")
-        if self.S3_SECRET_KEY == "minioadmin":
+        if self.STORAGE_BACKEND == "s3" and self.S3_SECRET_KEY == "minioadmin":
             warnings_.append("S3_SECRET_KEY is still the MinIO default")
         if not self.METRICS_TOKEN:
             warnings_.append(

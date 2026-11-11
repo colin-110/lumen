@@ -1,0 +1,22 @@
+NORTHWIND ANALYTICS LTD - INVOICE
+Invoice number: INV-2026-0412
+Invoice date: 1 April 2026
+Bill to: Acme Corp, Accounts Payable
+Contract reference: MSA-2026-017
+
+SERVICE PERIOD: 1 April 2026 - 30 April 2026
+
+LINE ITEMS
+1. Managed data warehouse service, monthly fee ........ 4,500.00 USD
+2. Additional analyst support, 6 hours at 140 USD ....... 840.00 USD
+3. Platform upgrade fee (one-off) ........................ 350.00 USD
+
+SUBTOTAL ................................................. 5,690.00 USD
+TAX (0%) ..................................................... 0.00 USD
+TOTAL DUE ................................................ 5,690.00 USD
+
+PAYMENT TERMS: Net 15 days. Payment due by 16 April 2026.
+Late payments accrue interest at 1.5% per month.
+
+Remit to: Northwind Analytics Ltd, account 4471-0098, reference INV-2026-0412.
+Questions: billing@northwind.example
