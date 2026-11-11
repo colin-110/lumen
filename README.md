@@ -81,7 +81,7 @@ Upload -> parse -> chunk -> embed -> index
 | Async processing | Celery |
 | Retrieval | Dense embeddings, BM25, RRF, cross-encoder |
 | AI | LiteLLM, Gemini, OpenAI, Anthropic, Groq, Ollama |
-| Infrastructure | Docker, S3/MinIO, Prometheus, Grafana |
+| Infrastructure | Docker, S3 or local disk storage, Prometheus, Grafana |
 
 ## Run locally
 
@@ -99,8 +99,7 @@ make seed                       # creates the admin account from backend/.env
 | Service | URL |
 |---|---|
 | App | http://localhost:3000 |
-| API docs | http://localhost:8000/docs |
-| MinIO console | http://localhost:9006 |
+| API docs | http://localhost:8000/docs (or your `BACKEND_HOST_PORT`) |
 | Grafana (with `--profile monitoring`) | http://localhost:3001 |
 
 Sign in with `FIRST_SUPERUSER_EMAIL` / `FIRST_SUPERUSER_PASSWORD` from `backend/.env`, or register a new account.

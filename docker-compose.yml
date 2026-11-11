@@ -1,3 +1,6 @@
+# Host ports for backend and Postgres can be moved if something else already
+# uses them: set BACKEND_HOST_PORT / POSTGRES_HOST_PORT in a root .env file.
+
 # Shared by migrate, backend and worker: one image, one config.
 x-backend: &backend
   image: lumen-backend:latest
@@ -11,7 +14,11 @@ x-backend: &backend
     REDIS_URL: redis://redis:6379/0
     CELERY_BROKER_URL: redis://redis:6379/1
     QDRANT_URL: http://qdrant:6333
-    S3_ENDPOINT_URL: http://minio:9000
+    # Uploaded files live on a volume shared by backend and worker.
+    STORAGE_BACKEND: local
+    LOCAL_STORAGE_DIR: /data/documents
+  volumes:
+    - documents_data:/data/documents
   depends_on: &backend-deps
     # migrate itself waits on a healthy db, so db is covered transitively.
     migrate:
@@ -20,8 +27,6 @@ x-backend: &backend
       condition: service_healthy
     qdrant:
       condition: service_started
-    minio:
-      condition: service_healthy
 
 services:
   db:
@@ -31,7 +36,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
       POSTGRES_DB: ${POSTGRES_DB:-enterprise_ai}
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -76,29 +81,6 @@ services:
         limits:
           memory: 512m
 
-  minio:
-    # Same pin-forward rule as qdrant. quay.io because MinIO pulled its
-    # images from Docker Hub; the tags are identical there.
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
-      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin}
-    command: server /data --console-address ":9001"
-    ports:
-      - "127.0.0.1:9005:9000"
-      - "127.0.0.1:9006:9001"
-    volumes:
-      - minio_data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-    deploy:
-      resources:
-        limits:
-          memory: 256m
-
   # Runs `alembic upgrade head` once and exits; backend and worker wait on it,
   # so a plain `docker compose up` on a fresh checkout gives a working stack.
   migrate:
@@ -118,7 +100,7 @@ services:
     <<: *backend
     build: ./backend
     ports:
-      - "8000:8000"
+      - "${BACKEND_HOST_PORT:-8000}:8000"
     environment:
       <<: *backend-env
       # Scale with replicas, not in-process workers: each worker loads its own
@@ -151,7 +133,11 @@ services:
       context: ./frontend
       args:
         # NEXT_PUBLIC_* is inlined at build time, so it's a build arg only.
-        NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+        NEXT_PUBLIC_API_URL: http://localhost:${BACKEND_HOST_PORT:-8000}/api/v1
+        # Pre-fills the login form; set DEMO_EMAIL / DEMO_PASSWORD in the root
+        # .env to the demo account from backend/.env, or leave unset.
+        NEXT_PUBLIC_DEMO_EMAIL: ${DEMO_EMAIL:-}
+        NEXT_PUBLIC_DEMO_PASSWORD: ${DEMO_PASSWORD:-}
     ports:
       - "3000:3000"
     depends_on:
@@ -203,6 +189,6 @@ volumes:
   postgres_data:
   redis_data:
   qdrant_data:
-  minio_data:
+  documents_data:
   prometheus_data:
   grafana_data:
