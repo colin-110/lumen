@@ -2,7 +2,7 @@
 
 Ingests the golden dataset (app/evaluation/golden_dataset.py) into an
 isolated fixture namespace in the real Qdrant collection, runs every
-question through four retrieval strategies using the exact same code paths
+question through each retrieval strategy using the exact same code paths
 as production (app/services/retrieval.py), scores each against the known-
 correct documents, and prints a comparison report.
 
@@ -28,6 +28,7 @@ from app.evaluation.fixtures import (
     ingest_fixtures,
 )
 from app.evaluation.golden_dataset import DOCUMENTS, QUESTIONS
+from app.services import qdrant_client as qdrant_store
 from app.services import retrieval
 
 logging.basicConfig(level=logging.WARNING)  # keep model-loading INFO noise out of the report
@@ -106,8 +107,12 @@ async def main(keep_fixtures: bool = False) -> list[StrategyResult]:
         ("Dense only", retrieval.dense_search),
         ("BM25 (sparse) only", retrieval.sparse_search),
         ("Hybrid (RRF)", retrieval.hybrid_search_no_rerank),
-        ("Hybrid + reranker", retrieval.hybrid_search_reranked),
+        ("Hybrid + cross-encoder", retrieval.hybrid_search_cross_encoder),
     ]
+    if qdrant_store.colbert_available:
+        strategies.append(("Hybrid + ColBERT", retrieval.hybrid_search_colbert))
+    else:
+        print("ColBERT strategy skipped: set RERANK_METHOD=colbert on a fresh collection.")
 
     results = []
     for name, fn in strategies:

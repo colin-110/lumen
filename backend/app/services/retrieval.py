@@ -16,7 +16,9 @@ from qdrant_client.http import models
 
 from app.core.config import settings
 from app.services import embeddings
+from app.services import qdrant_client as qdrant_store
 from app.services.qdrant_client import (
+    COLBERT_VECTOR_NAME,
     COLLECTION_NAME,
     DENSE_VECTOR_NAME,
     SPARSE_VECTOR_NAME,
@@ -155,12 +157,69 @@ def _hybrid_candidates_sync(
     return points, texts
 
 
+def _uses_colbert() -> bool:
+    return settings.RERANK_ENABLED and qdrant_store.colbert_available
+
+
+def _colbert_ranked_sync(
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    candidates: int,
+    document_ids: list[str] | None = None,
+) -> list:
+    """Hybrid candidates re-ordered by late interaction, in one Qdrant call.
+
+    The inner prefetch is the same dense + sparse RRF as `_hybrid_candidates_sync`;
+    the outer query scores that shortlist by ColBERT MaxSim against token
+    vectors stored at ingestion. No model reads the candidates at question
+    time, which is what made the cross-encoder the slowest step in a chat turn.
+    """
+    dense_vec = embeddings.embed_dense_one(query)
+    sparse = embeddings.embed_sparse_one(query)
+    query_filter = _tenant_filter(organization_id, owner_id, document_ids)
+    result = qdrant.query_points(
+        collection_name=COLLECTION_NAME,
+        prefetch=models.Prefetch(
+            prefetch=[
+                models.Prefetch(
+                    query=dense_vec, using=DENSE_VECTOR_NAME, limit=candidates, filter=query_filter
+                ),
+                models.Prefetch(
+                    query=models.SparseVector(indices=sparse["indices"], values=sparse["values"]),
+                    using=SPARSE_VECTOR_NAME,
+                    limit=candidates,
+                    filter=query_filter,
+                ),
+            ],
+            query=models.FusionQuery(fusion=models.Fusion.RRF),
+            limit=candidates,
+        ),
+        query=embeddings.embed_colbert_query(query),
+        using=COLBERT_VECTOR_NAME,
+        limit=candidates,
+        with_payload=True,
+    )
+    return result.points
+
+
 def _search_sync(
     query: str,
     organization_id: str | None,
     owner_id: str,
     document_ids: list[str] | None = None,
 ) -> list[RetrievedChunk]:
+    if _uses_colbert():
+        points = _colbert_ranked_sync(
+            query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES, document_ids
+        )
+        scored = _points_to_chunks(points)
+        if document_ids:
+            return allocate_fairly(scored, settings.SCOPED_RERANK_TOP_K)
+        # No score floor here: MIN_RERANK_SCORE is calibrated to cross-encoder
+        # logits and means nothing on MaxSim's scale.
+        return scored[: settings.RERANK_TOP_K]
+
     points, texts = _hybrid_candidates_sync(
         query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES, document_ids
     )
@@ -337,7 +396,38 @@ async def hybrid_search_no_rerank(
     )
 
 
+async def hybrid_search_colbert(
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int = 10,
+    document_ids: list[str] | None = None,
+) -> list[RetrievedChunk]:
+    """Top `limit` by late interaction, unfiltered (eval harness)."""
+
+    def _sync() -> list[RetrievedChunk]:
+        points = _colbert_ranked_sync(
+            query, organization_id, owner_id, settings.RETRIEVE_CANDIDATES, document_ids
+        )
+        return _points_to_chunks(points)[:limit]
+
+    return await asyncio.to_thread(_sync)
+
+
 async def hybrid_search_reranked(
+    query: str,
+    organization_id: str | None,
+    owner_id: str,
+    limit: int = 10,
+    document_ids: list[str] | None = None,
+) -> list[RetrievedChunk]:
+    """Whichever reranker production is configured to use (debugger)."""
+    if _uses_colbert():
+        return await hybrid_search_colbert(query, organization_id, owner_id, limit, document_ids)
+    return await hybrid_search_cross_encoder(query, organization_id, owner_id, limit, document_ids)
+
+
+async def hybrid_search_cross_encoder(
     query: str,
     organization_id: str | None,
     owner_id: str,
@@ -389,13 +479,16 @@ def _upsert_sync(
         return 0
     dense_vecs = embeddings.embed_dense(chunks)
     sparse_vecs = embeddings.embed_sparse(chunks)
+    colbert_vecs = (
+        embeddings.embed_colbert(chunks) if qdrant_store.colbert_available else [None] * len(chunks)
+    )
 
     points = []
     # strict=True for the same reason as the rerank zip above: a length
     # mismatch here would mean chunks were never indexed, so the document
     # would look ingested while part of it was silently missing from search.
-    for position, (text, dense, sparse) in enumerate(
-        zip(chunks, dense_vecs, sparse_vecs, strict=True)
+    for position, (text, dense, sparse, colbert) in enumerate(
+        zip(chunks, dense_vecs, sparse_vecs, colbert_vecs, strict=True)
     ):
         points.append(
             models.PointStruct(
@@ -405,6 +498,7 @@ def _upsert_sync(
                     SPARSE_VECTOR_NAME: models.SparseVector(
                         indices=sparse["indices"], values=sparse["values"]
                     ),
+                    **({COLBERT_VECTOR_NAME: colbert} if colbert is not None else {}),
                 },
                 payload={
                     "document_id": str(document_id),

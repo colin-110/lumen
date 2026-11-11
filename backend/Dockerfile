@@ -107,9 +107,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tesseract-ocr \
     && rm -rf /var/lib/apt/lists/*
 
+# MALLOC_ARENA_MAX: glibc otherwise keeps a malloc arena per thread and the
+# ONNX runtime's threads retain freed memory in them. Measured under the
+# ingestion load test: API peak 1,623 MiB -> 1,348 MiB with this set to 2.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    UVICORN_WORKERS=1
+    UVICORN_WORKERS=1 \
+    MALLOC_ARENA_MAX=2
 
 COPY --from=builder /install /usr/local
 COPY app ./app

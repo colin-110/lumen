@@ -32,6 +32,7 @@ from app.schemas.debug import (
     RetrievalDebugRequest,
     RetrievalDebugResponse,
 )
+from app.services import qdrant_client as qdrant_store
 from app.services import retrieval, semantic_cache
 
 # Private helpers imported deliberately: a debugger that reconstructed the
@@ -155,11 +156,19 @@ async def debug_retrieval(
         None,
     )
     if settings.RERANK_ENABLED:
+        colbert = settings.RERANK_METHOD == "colbert" and qdrant_store.colbert_available
         _, reranked = await add_stage(
             "reranked",
-            "Cross-encoder rerank",
-            f"{settings.RERANK_MODEL} scores each candidate against the query jointly, rather than "
-            "comparing two independently-computed vectors. This is the step that fixes fusion's ordering.",
+            "ColBERT late-interaction rerank" if colbert else "Cross-encoder rerank",
+            (
+                f"{settings.COLBERT_MODEL} token vectors stored at ingestion are matched against the "
+                "query's token vectors (MaxSim) inside Qdrant, so no model re-reads the candidates."
+            )
+            if colbert
+            else (
+                f"{settings.RERANK_MODEL} scores each candidate against the query jointly, rather than "
+                "comparing two independently-computed vectors. This is the step that fixes fusion's ordering."
+            ),
             lambda: retrieval.hybrid_search_reranked(
                 search_query, org_str, owner_str, STAGE_LIMIT, doc_ids
             ),

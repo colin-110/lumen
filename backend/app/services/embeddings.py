@@ -16,7 +16,7 @@ import functools
 import logging
 import threading
 
-from fastembed import SparseTextEmbedding, TextEmbedding
+from fastembed import LateInteractionTextEmbedding, SparseTextEmbedding, TextEmbedding
 from fastembed.rerank.cross_encoder import TextCrossEncoder
 
 from app.core.config import settings
@@ -27,6 +27,7 @@ _lock = threading.Lock()
 _dense: TextEmbedding | None = None
 _sparse: SparseTextEmbedding | None = None
 _reranker: TextCrossEncoder | None = None
+_colbert: LateInteractionTextEmbedding | None = None
 
 
 def _threads() -> int | None:
@@ -79,6 +80,29 @@ def get_reranker() -> TextCrossEncoder:
     return _reranker
 
 
+def get_colbert_model() -> LateInteractionTextEmbedding:
+    global _colbert
+    if _colbert is None:
+        with _lock:
+            if _colbert is None:
+                logger.info("Loading late-interaction model %s", settings.COLBERT_MODEL)
+                _colbert = LateInteractionTextEmbedding(
+                    model_name=settings.COLBERT_MODEL, threads=_threads(), **_session_kwargs()
+                )
+    return _colbert
+
+
+def embed_colbert(texts: list[str]) -> list[list[list[float]]]:
+    """One matrix per text: a vector for every token."""
+    return [
+        m.tolist() for m in get_colbert_model().embed(texts, batch_size=settings.COLBERT_BATCH_SIZE)
+    ]
+
+
+def embed_colbert_query(text: str) -> list[list[float]]:
+    return next(iter(get_colbert_model().query_embed(text))).tolist()
+
+
 def warm_up() -> None:
     """Force the enabled models to load. Call once at process startup so the
     first real request isn't the one paying the ~1-2s model-load cost.
@@ -88,7 +112,9 @@ def warm_up() -> None:
     since it's a whole third ONNX model loaded alongside dense+sparse."""
     get_dense_model()
     get_sparse_model()
-    if settings.RERANK_ENABLED:
+    if settings.RERANK_METHOD == "colbert":
+        get_colbert_model()
+    elif settings.RERANK_ENABLED:
         get_reranker()
 
 

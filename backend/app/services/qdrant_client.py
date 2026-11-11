@@ -32,6 +32,28 @@ CACHE_COLLECTION_NAME = settings.QDRANT_CACHE_COLLECTION
 
 DENSE_VECTOR_NAME = "dense"
 SPARSE_VECTOR_NAME = "sparse"
+COLBERT_VECTOR_NAME = "colbert"
+
+# Whether the live collection actually holds late-interaction vectors. Set by
+# init_qdrant; retrieval and indexing fall back to the cross-encoder path when
+# a collection created before RERANK_METHOD=colbert lacks them.
+colbert_available = False
+
+
+def _colbert_vector_params() -> models.VectorParams:
+    return models.VectorParams(
+        size=settings.COLBERT_DIM,
+        distance=models.Distance.COSINE,
+        multivector_config=models.MultiVectorConfig(
+            comparator=models.MultiVectorComparator.MAX_SIM
+        ),
+        # Only ever used to re-order a prefetched shortlist, never searched on
+        # its own, so an HNSW graph over it would cost RAM and build time for
+        # nothing. Half precision on disk keeps a token-per-vector index small.
+        hnsw_config=models.HnswConfigDiff(m=0),
+        datatype=models.Datatype.FLOAT16,
+        on_disk=True,
+    )
 
 
 def _ensure_document_collection() -> None:
@@ -45,6 +67,11 @@ def _ensure_document_collection() -> None:
             DENSE_VECTOR_NAME: models.VectorParams(
                 size=settings.DENSE_DIM,
                 distance=models.Distance.COSINE,
+            ),
+            **(
+                {COLBERT_VECTOR_NAME: _colbert_vector_params()}
+                if settings.RERANK_METHOD == "colbert"
+                else {}
             ),
         },
         sparse_vectors_config={
@@ -102,8 +129,25 @@ def _ensure_cache_collection() -> None:
         _ensure_payload_index(CACHE_COLLECTION_NAME, field, schema)
 
 
+def _detect_colbert() -> bool:
+    if settings.RERANK_METHOD != "colbert":
+        return False
+    vectors = client.get_collection(COLLECTION_NAME).config.params.vectors
+    if isinstance(vectors, dict) and COLBERT_VECTOR_NAME in vectors:
+        return True
+    logger.error(
+        "RERANK_METHOD=colbert but collection %s has no %r vector (it predates the setting). "
+        "Falling back to the cross-encoder. Recreate the collection and re-ingest to enable it.",
+        COLLECTION_NAME,
+        COLBERT_VECTOR_NAME,
+    )
+    return False
+
+
 def init_qdrant() -> None:
+    global colbert_available
     _ensure_document_collection()
+    colbert_available = _detect_colbert()
     _ensure_cache_collection()
 
 

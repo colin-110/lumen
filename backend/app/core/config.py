@@ -217,6 +217,19 @@ class Settings(BaseSettings):
     DENSE_DIM: int = 384
     SPARSE_MODEL: str = "Qdrant/bm25"
     RERANK_MODEL: str = "Xenova/ms-marco-MiniLM-L-6-v2"
+    # "cross_encoder" re-reads every candidate with RERANK_MODEL per question.
+    # "colbert" stores per-token vectors at ingestion and lets Qdrant rank
+    # candidates by late interaction (MaxSim) at query time, so no model reads
+    # the candidates. Needs a collection created with the colbert vector.
+    # Measured on the golden set (22 questions, 2 ONNX threads): cross-encoder
+    # Recall@5 100%, MRR 0.95, NDCG@10 0.97 at 1,222 ms; ColBERT Recall@5 98%,
+    # MRR 0.98, NDCG@10 0.98 at 25 ms. Ingestion is ~85% slower in exchange.
+    RERANK_METHOD: Literal["cross_encoder", "colbert"] = "colbert"
+    COLBERT_MODEL: str = "answerdotai/answerai-colbert-small-v1"
+    COLBERT_DIM: int = 96
+    # Chunks per late-interaction pass at ingestion. Token-level output makes
+    # each item much larger than a dense embedding, so this stays small.
+    COLBERT_BATCH_SIZE: int = 4
     # Off skips loading the cross-encoder entirely (not just skipping the
     # call) - the third ONNX model resident in memory alongside dense+sparse
     # is what OOMs a RAM-capped host like Render's free 512MB, so this is a
