@@ -71,7 +71,9 @@ Resources:
       InstanceType: !Ref InstanceType
       SubnetId: !Ref SubnetId
       IamInstanceProfile: !Ref InstanceProfile
-      SecurityGroupIds: [!Ref WebSecurityGroup]
+      # GroupId, not Ref: Ref on a security group created without a VpcId
+      # returns its name, which EC2 rejects alongside a SubnetId.
+      SecurityGroupIds: [!GetAtt WebSecurityGroup.GroupId]
       # Standard, not the T-family default "unlimited": sustained CPU throttles
       # to baseline instead of billing surplus credits.
       CreditSpecification: { CPUCredits: standard }
