@@ -1,5 +1,6 @@
 import type {
   ChatSource,
+  FigureVerification,
   LLMError,
   Conversation,
   ConversationDetail,
@@ -312,6 +313,9 @@ export interface StreamHandlers {
   onToken?: (token: string) => void;
   onDone?: (info: { cached: boolean; latency_ms: number }) => void;
   onError?: (error: LLMError | string) => void;
+  /** Documents the backend picked because the question named them. */
+  onScope?: (filenames: string[]) => void;
+  onVerification?: (report: FigureVerification) => void;
 }
 
 export async function streamChat(
@@ -389,8 +393,14 @@ export async function streamChat(
         case "conversation":
           handlers.onConversation?.((event.data as { conversation_id: string }).conversation_id);
           break;
+        case "scope":
+          handlers.onScope?.((event.data as { filenames: string[] }).filenames);
+          break;
         case "sources":
           handlers.onSources?.(event.data as ChatSource[]);
+          break;
+        case "verification":
+          handlers.onVerification?.(event.data as FigureVerification);
           break;
         case "token":
           handlers.onToken?.(event.data as string);

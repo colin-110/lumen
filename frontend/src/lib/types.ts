@@ -65,7 +65,7 @@ export interface ConversationDetail extends Conversation {
 }
 
 export interface StreamEvent {
-  type: "conversation" | "sources" | "token" | "done" | "error";
+  type: "conversation" | "scope" | "sources" | "token" | "verification" | "done" | "error";
   data: unknown;
 }
 
@@ -117,4 +117,21 @@ export interface RetrievalDebug {
   final_prompt: string;
   answer: string | null;
   total_ms: number;
+}
+
+/** One sentence of an answer that states figures, checked against its sources. */
+export interface FigureClaim {
+  text: string;
+  citations: number[];
+  figures: string[];
+  /** Figures in the sentence that its cited sources don't contain. */
+  missing: string[];
+  status: "verified" | "unverified" | "uncited";
+}
+
+/** Every figure in an answer checked against the source it cites. */
+export interface FigureVerification {
+  checked: number;
+  verified: number;
+  claims: FigureClaim[];
 }

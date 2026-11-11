@@ -10,11 +10,12 @@ import { useDocumentUploads } from "@/lib/use-document-uploads";
 import { suggestionsForDocuments } from "@/lib/suggestions";
 import { MessageBubble, type DisplayMessage } from "./MessageBubble";
 import { Composer } from "./Composer";
-import type { ChatSource, DocumentItem, LLMError } from "@/lib/types";
+import type { ChatSource, DocumentItem, FigureVerification, LLMError } from "@/lib/types";
 
 interface StreamingState {
   text: string;
   sources: ChatSource[];
+  autoScoped?: string[];
 }
 
 let tempIdCounter = 0;
@@ -121,6 +122,8 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
       let finalLatency = 0;
       let sawError = false;
       let llmError: LLMError | null = null;
+      let finalScope: string[] = [];
+      let finalVerification: FigureVerification | null = null;
 
       try {
         await api.streamChat(
@@ -134,6 +137,13 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
                 setConversationId(id);
                 router.replace(`/?c=${id}`, { scroll: false });
               }
+            },
+            onScope: (filenames) => {
+              finalScope = filenames;
+              setStreaming((prev) => (prev ? { ...prev, autoScoped: filenames } : prev));
+            },
+            onVerification: (report) => {
+              finalVerification = report;
             },
             onSources: (sources) => {
               finalSources = sources;
@@ -171,6 +181,8 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
           content: finalText || (sawError ? "Sorry, I couldn't generate a response. Please try again." : ""),
           llmError,
           sources: finalSources,
+          autoScoped: finalScope,
+          verification: finalVerification,
           cached: finalCached,
           latency_ms: finalLatency || null,
         },
@@ -217,6 +229,7 @@ export function ChatPanel({ initialConversationId }: { initialConversationId?: s
                     role: "assistant",
                     content: streaming.text,
                     sources: streaming.sources,
+                    autoScoped: streaming.autoScoped,
                   }}
                 />
               )}
