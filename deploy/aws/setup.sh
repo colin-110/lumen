@@ -22,7 +22,13 @@ fi
 
 # --- Docker and the AWS CLI ----------------------------------------------
 command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
-command -v aws >/dev/null || snap install aws-cli --classic
+if ! command -v aws >/dev/null; then
+  # AWS's own installer, not snap: the snap store being unreachable aborted
+  # the very first boot of this host.
+  apt-get install -y -qq unzip >/dev/null
+  curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o /tmp/awscliv2.zip
+  unzip -q -o /tmp/awscliv2.zip -d /tmp && /tmp/aws/install --update && rm -rf /tmp/aws /tmp/awscliv2.zip
+fi
 
 param() {  # print an SSM parameter's value, or nothing if it doesn't exist
   aws ssm get-parameter --region "$AWS_REGION" --name "$1" --with-decryption \
