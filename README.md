@@ -2,7 +2,7 @@
 
 Self-hosted document assistant combining hybrid retrieval, semantic caching, asynchronous ingestion, multi-provider LLM fallback, and streaming answers with source citations.
 
-[Live demo](https://lumen-phi-peach.vercel.app) (the login form is pre-filled with a demo account)
+[Live demo](https://lumen-three-nu.vercel.app) (the login form is pre-filled with a demo account)
 
 ![Lumen chat](docs/screenshot-chat.png)
 
