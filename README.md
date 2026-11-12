@@ -2,7 +2,7 @@
 
 Self-hosted document assistant combining hybrid retrieval, semantic caching, asynchronous ingestion, multi-provider LLM fallback, and streaming answers with source citations.
 
-[Live demo](https://lumen-three-nu.vercel.app)
+[Live demo](https://lumen-phi-peach.vercel.app) (the login form is pre-filled with a demo account)
 
 ![Lumen chat](docs/screenshot-chat.png)
 
@@ -127,6 +127,30 @@ make test              # full backend suite (needs Postgres + Redis) and fronten
 make lint
 make eval-retrieval    # Recall@k, MRR and NDCG against the golden dataset
 ~~~
+
+## Deploying to AWS
+
+The backend runs on one Graviton instance (`t4g.small`, 2 GB) from a CloudFormation stack; the frontend runs on Vercel.
+
+~~~bash
+# 1. Store the LLM key (encrypted, never in the repo)
+aws ssm put-parameter --name /lumen/GEMINI_API_KEY --type SecureString --value "<key>"
+
+# 2. Create the stack: instance, Elastic IP, HTTP/HTTPS-only security group, SSM role
+aws cloudformation deploy --stack-name lumen --template-file deploy/aws/lumen.yml \
+  --capabilities CAPABILITY_IAM --parameter-overrides SubnetId=<public subnet in an AZ with t4g>
+~~~
+
+First boot runs [deploy/aws/setup.sh](deploy/aws/setup.sh): swap, Docker, secrets, the low-memory compose overlay, Caddy with a Let's Encrypt certificate on `<elastic-ip>.nip.io`, and the demo seed. The stack's `ApiUrl` output is the frontend's `NEXT_PUBLIC_API_URL`; the frontend's origin goes in the `/lumen/CORS_ORIGINS` parameter.
+
+Redeploy after pushing, with no SSH (the instance has no port 22 open):
+
+~~~bash
+aws ssm send-command --instance-ids <id> --document-name AWS-RunShellScript \
+  --parameters 'commands=["cd /opt/lumen && git pull --ff-only && bash deploy/aws/setup.sh"]'
+~~~
+
+`aws cloudformation delete-stack --stack-name lumen` removes everything the stack created.
 
 ## What I focused on
 
